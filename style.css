@@ -54,6 +54,10 @@ body.day-mode {
   height: 72px;
 }
 
+.toolbar-btn-left {
+  right: auto;
+}
+
 #fullscreen-btn {
   top: 16px;
 }
@@ -64,6 +68,11 @@ body.day-mode {
 
 #rain-btn {
   top: calc(50% + 8px);
+}
+
+#constellation-btn {
+  left: 16px;
+  top: calc(50% - 22px);
 }
 
 body.day-mode .toolbar-btn {
