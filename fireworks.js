@@ -39,6 +39,9 @@
   let rainStartedAt = 0;
   let thunderFlash = 0;
   let nextThunderAt = 0;
+  let postRainRainbows = [];
+  let constellationEvent = null;
+  let nextConstellationAt = 0;
 
   const MAX_RAIN_DROPS = 140;
   const LONG_PRESS_MS = 500;
@@ -87,6 +90,51 @@
   };
   const RAINBOW_HUES = [0, 32, 55, 95, 145, 210, 275];
 
+  const SEASON_PALETTES = {
+    winter: {
+      nightTop: "#0a0e28", nightBottom: "#010106",
+      dayTop: "#8eb8e8", dayBottom: "#e8f2fc",
+      moonRgb: "255, 248, 220", sunRgb: "255, 230, 80",
+      hueShift: 8,
+    },
+    spring: {
+      nightTop: "#0f1238", nightBottom: "#030310",
+      dayTop: "#7ec8e8", dayBottom: "#e5f8e8",
+      moonRgb: "255, 248, 220", sunRgb: "255, 220, 60",
+      hueShift: -10,
+    },
+    summer: {
+      nightTop: "#0d1033", nightBottom: "#020208",
+      dayTop: "#6ec5ff", dayBottom: "#dff3ff",
+      moonRgb: "255, 248, 220", sunRgb: "255, 220, 60",
+      hueShift: 0,
+    },
+    fall: {
+      nightTop: "#120a1a", nightBottom: "#060308",
+      dayTop: "#7aabff", dayBottom: "#ffe8cc",
+      moonRgb: "255, 235, 200", sunRgb: "255, 180, 50",
+      hueShift: 20,
+    },
+  };
+
+  const SOUND_VARIANTS = {
+    pop: [
+      { boomMult: 1, pitchMult: 1, volMult: 1 },
+      { boomMult: 0.92, pitchMult: 1.1, volMult: 0.94 },
+      { boomMult: 1.08, pitchMult: 0.9, volMult: 1.06 },
+      { boomMult: 0.96, pitchMult: 1.16, volMult: 0.9 },
+    ],
+    rainbow: [
+      { pitchShift: 0, volMult: 1 },
+      { pitchShift: 2, volMult: 0.95 },
+      { pitchShift: -2, volMult: 1.04 },
+      { pitchShift: 3, volMult: 0.92 },
+    ],
+  };
+
+  const CONSTELLATION_MIN_MS = 180000;
+  const CONSTELLATION_MAX_MS = 300000;
+
   const GRAVITY = 0.028;
   const DRAG = 0.992;
   const DRAG_THRESHOLD = 10;
@@ -109,6 +157,31 @@
 
   function celestialPosition() {
     return { x: width * 0.82, y: height * 0.14 };
+  }
+
+  function getSeasonKey() {
+    const m = new Date().getMonth();
+    if (m === 11 || m <= 1) return "winter";
+    if (m >= 2 && m <= 4) return "spring";
+    if (m >= 5 && m <= 7) return "summer";
+    return "fall";
+  }
+
+  function getSeasonPalette() {
+    return SEASON_PALETTES[getSeasonKey()];
+  }
+
+  function pickSoundVariant() {
+    return Math.floor(Math.random() * 4);
+  }
+
+  function pitchShiftFreq(freq, semitones) {
+    return freq * Math.pow(2, semitones / 12);
+  }
+
+  function seasonHue(baseHue) {
+    const shift = getSeasonPalette().hueShift;
+    return ((baseHue + shift) % 360 + 360) % 360;
   }
 
   function arcRadiusForSize(sizeKey) {
@@ -149,22 +222,23 @@
     c.height = height;
     const skyCtx = c.getContext("2d");
 
+    const palette = getSeasonPalette();
     const gradient = skyCtx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, "#0d1033");
-    gradient.addColorStop(1, "#020208");
+    gradient.addColorStop(0, palette.nightTop);
+    gradient.addColorStop(1, palette.nightBottom);
     skyCtx.fillStyle = gradient;
     skyCtx.fillRect(0, 0, width, height);
 
     const moonX = width * 0.82;
     const moonY = height * 0.14;
     const moonGlow = skyCtx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 70);
-    moonGlow.addColorStop(0, "rgba(255, 248, 220, 0.18)");
-    moonGlow.addColorStop(0.4, "rgba(255, 248, 220, 0.06)");
-    moonGlow.addColorStop(1, "rgba(255, 248, 220, 0)");
+    moonGlow.addColorStop(0, `rgba(${palette.moonRgb}, 0.18)`);
+    moonGlow.addColorStop(0.4, `rgba(${palette.moonRgb}, 0.06)`);
+    moonGlow.addColorStop(1, `rgba(${palette.moonRgb}, 0)`);
     skyCtx.fillStyle = moonGlow;
     skyCtx.fillRect(moonX - 70, moonY - 70, 140, 140);
 
-    skyCtx.fillStyle = "rgba(255, 248, 220, 0.75)";
+    skyCtx.fillStyle = `rgba(${palette.moonRgb}, 0.75)`;
     skyCtx.beginPath();
     skyCtx.arc(moonX, moonY, 18, 0, Math.PI * 2);
     skyCtx.fill();
@@ -190,22 +264,23 @@
     c.height = height;
     const skyCtx = c.getContext("2d");
 
+    const palette = getSeasonPalette();
     const gradient = skyCtx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, "#6ec5ff");
-    gradient.addColorStop(1, "#dff3ff");
+    gradient.addColorStop(0, palette.dayTop);
+    gradient.addColorStop(1, palette.dayBottom);
     skyCtx.fillStyle = gradient;
     skyCtx.fillRect(0, 0, width, height);
 
     const sunX = width * 0.82;
     const sunY = height * 0.14;
     const sunGlow = skyCtx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 85);
-    sunGlow.addColorStop(0, "rgba(255, 230, 80, 0.45)");
-    sunGlow.addColorStop(0.35, "rgba(255, 210, 60, 0.15)");
-    sunGlow.addColorStop(1, "rgba(255, 200, 50, 0)");
+    sunGlow.addColorStop(0, `rgba(${palette.sunRgb}, 0.45)`);
+    sunGlow.addColorStop(0.35, `rgba(${palette.sunRgb}, 0.15)`);
+    sunGlow.addColorStop(1, `rgba(${palette.sunRgb}, 0)`);
     skyCtx.fillStyle = sunGlow;
     skyCtx.fillRect(sunX - 85, sunY - 85, 170, 170);
 
-    skyCtx.fillStyle = "rgba(255, 220, 60, 0.95)";
+    skyCtx.fillStyle = `rgba(${palette.sunRgb}, 0.95)`;
     skyCtx.beginPath();
     skyCtx.arc(sunX, sunY, 22, 0, Math.PI * 2);
     skyCtx.fill();
@@ -386,14 +461,198 @@
   }
 
   function spawnPostRainRainbow() {
-    const cx = width * 0.5;
-    const cy = height * 0.72;
-    const arc = createArc(cx, cy, width * 0.4, 0.8);
-    arc.decay = 0.0026;
-    arc.appearSpeed = 0.011;
-    arcs.push(arc);
+    postRainRainbows.push({
+      bornAt: Date.now(),
+      lifeMs: 4800,
+      fadeInMs: 1000,
+      fadeOutMs: 2000,
+      holdAlpha: 0.72,
+      alpha: 0,
+    });
     initAudio();
-    playRainbowSound("medium");
+    playPostRainRainbowSound();
+  }
+
+  function updatePostRainRainbows() {
+    const now = Date.now();
+    for (let i = postRainRainbows.length - 1; i >= 0; i--) {
+      const r = postRainRainbows[i];
+      const age = now - r.bornAt;
+      if (age >= r.lifeMs) {
+        postRainRainbows.splice(i, 1);
+        continue;
+      }
+      const outStart = r.lifeMs - r.fadeOutMs;
+      if (age < r.fadeInMs) {
+        const t = age / r.fadeInMs;
+        r.alpha = r.holdAlpha * (1 - Math.pow(1 - t, 2));
+      } else if (age > outStart) {
+        r.alpha = r.holdAlpha * (1 - (age - outStart) / r.fadeOutMs);
+      } else {
+        r.alpha = r.holdAlpha;
+      }
+    }
+  }
+
+  function drawPostRainRainbows() {
+    if (postRainRainbows.length === 0 || skyBlend < 0.4) return;
+
+    const baseY = height * 0.76;
+    const span = width * 0.46;
+    const lift = height * 0.28;
+    const bandW = 4.5;
+    const bandStep = 5;
+
+    ctx.save();
+    ctx.globalAlpha = skyBlend;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    for (const r of postRainRainbows) {
+      if (r.alpha <= 0.01) continue;
+      for (let i = 0; i < RAINBOW_HUES.length; i++) {
+        const inset = i * bandStep;
+        const spanBand = Math.max(span * 0.55, span - inset * 0.82);
+        const liftBand = Math.max(lift * 0.45, lift - inset * 0.5);
+        const y0 = baseY + inset * 0.06;
+        const cx = width * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - spanBand, y0);
+        ctx.bezierCurveTo(
+          cx - spanBand * 0.58,
+          y0 - liftBand,
+          cx + spanBand * 0.58,
+          y0 - liftBand,
+          cx + spanBand,
+          y0
+        );
+        ctx.strokeStyle = `hsla(${RAINBOW_HUES[i]}, 86%, 54%, ${r.alpha * 0.88})`;
+        ctx.lineWidth = bandW;
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function scheduleNextConstellation() {
+    nextConstellationAt = Date.now() + random(CONSTELLATION_MIN_MS, CONSTELLATION_MAX_MS);
+  }
+
+  function playConstellationSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const notes = [784, 988, 1175];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = notes[i];
+      const start = now + 0.9 + i * 0.14;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.028, start + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(start);
+      osc.stop(start + 0.38);
+    }
+  }
+
+  function spawnConstellation() {
+    const cx = random(width * 0.22, width * 0.78);
+    const cy = random(height * 0.1, height * 0.42);
+    const spread = random(55, 95);
+    const templates = [
+      { dots: [[0, 0], [0.55, 0.32], [1, 0.08]], links: [[0, 1], [1, 2], [2, 0]] },
+      { dots: [[0, 0.15], [0.38, 0], [0.72, 0.22], [1, 0.05]], links: [[0, 1], [1, 2], [2, 3]] },
+      { dots: [[0.5, 0], [0, 0.55], [1, 0.55]], links: [[0, 1], [1, 2], [2, 0]] },
+    ];
+    const tpl = pickRandom(templates);
+    constellationEvent = {
+      dots: tpl.dots.map(([rx, ry]) => ({
+        x: cx + (rx - 0.5) * spread * 2,
+        y: cy + ry * spread,
+      })),
+      links: tpl.links,
+      bornAt: Date.now(),
+      lifeMs: 5500,
+      connectAt: 1200,
+      glowAt: 2200,
+      fadeAt: 3800,
+      alpha: 0,
+    };
+    initAudio();
+    playConstellationSound();
+  }
+
+  function tickConstellationSpawner() {
+    if (constellationEvent || skyBlend > 0.35) return;
+    const now = Date.now();
+    if (nextConstellationAt === 0) scheduleNextConstellation();
+    if (now < nextConstellationAt) return;
+    scheduleNextConstellation();
+    spawnConstellation();
+  }
+
+  function updateConstellation() {
+    if (!constellationEvent) return;
+    const age = Date.now() - constellationEvent.bornAt;
+    if (age >= constellationEvent.lifeMs) {
+      constellationEvent = null;
+      return;
+    }
+    if (age < 800) {
+      constellationEvent.alpha = age / 800;
+    } else if (age > constellationEvent.fadeAt) {
+      constellationEvent.alpha = 1 - (age - constellationEvent.fadeAt) / (constellationEvent.lifeMs - constellationEvent.fadeAt);
+    } else {
+      constellationEvent.alpha = 1;
+    }
+  }
+
+  function drawConstellation() {
+    if (!constellationEvent || skyBlend >= 0.98) return;
+    const e = constellationEvent;
+    const age = Date.now() - e.bornAt;
+    ctx.save();
+    ctx.globalAlpha = (1 - skyBlend) * e.alpha;
+    ctx.globalCompositeOperation = "lighter";
+
+    for (const d of e.dots) {
+      const tw = 0.65 + Math.sin(age * 0.006 + d.x * 0.01) * 0.2;
+      ctx.fillStyle = `rgba(200, 220, 255, ${tw * 0.85})`;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (age >= e.connectAt) {
+      const lineAlpha = Math.min(1, (age - e.connectAt) / 700);
+      ctx.strokeStyle = `rgba(180, 210, 255, ${lineAlpha * 0.55})`;
+      ctx.lineWidth = 1.5;
+      for (const [a, b] of e.links) {
+        ctx.beginPath();
+        ctx.moveTo(e.dots[a].x, e.dots[a].y);
+        ctx.lineTo(e.dots[b].x, e.dots[b].y);
+        ctx.stroke();
+      }
+    }
+
+    if (age >= e.glowAt) {
+      const glowA = Math.min(0.32, ((age - e.glowAt) / 900) * 0.32);
+      for (const d of e.dots) {
+        const g = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 22);
+        g.addColorStop(0, `rgba(200, 220, 255, ${glowA})`);
+        g.addColorStop(1, "rgba(200, 220, 255, 0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 22, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
   }
 
   function drawCelestialPulse() {
@@ -890,7 +1149,7 @@
   }
 
   function burstSingleColor(x, y) {
-    const baseHue = random(0, 360);
+    const baseHue = seasonHue(random(0, 360));
     const size = pickRandom(["small", "medium", "big"]);
     spawnBurst(x, y, size, () => baseHue + random(-15, 15));
     playPopSound(size, "normal");
@@ -1284,6 +1543,9 @@
     tickShootingStarSpawner();
     updateShootingStars();
     drawShootingStars();
+    tickConstellationSpawner();
+    updateConstellation();
+    drawConstellation();
     tickAmbientSpawner();
     updateAmbient();
     drawAmbient();
@@ -1303,6 +1565,8 @@
     updateParticles();
     drawPlanMarkers();
     drawArcs();
+    updatePostRainRainbows();
+    drawPostRainRainbows();
     if (particles.length > 0) {
       drawParticles();
     }
@@ -1675,13 +1939,72 @@
     }
   }
 
+  function playPostRainRainbowSound() {
+    if (!audioCtx) return;
+
+    const now = audioCtx.currentTime;
+    const volume = 0.072;
+    const duration = 3.9;
+
+    const pad = audioCtx.createOscillator();
+    const padGain = audioCtx.createGain();
+    const padFilter = audioCtx.createBiquadFilter();
+    pad.type = "sine";
+    pad.frequency.value = 392;
+    padFilter.type = "lowpass";
+    padFilter.frequency.value = 900;
+    padGain.gain.setValueAtTime(0, now);
+    padGain.gain.linearRampToValueAtTime(volume * 0.32, now + 0.45);
+    padGain.gain.setValueAtTime(volume * 0.26, now + duration * 0.55);
+    padGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    pad.connect(padFilter);
+    padFilter.connect(padGain);
+    padGain.connect(audioCtx.destination);
+    pad.start(now);
+    pad.stop(now + duration + 0.1);
+
+    const notes = [523, 659, 784, 988, 1175, 1319];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+      osc.type = "sine";
+      osc.frequency.value = notes[i];
+      filter.type = "lowpass";
+      filter.frequency.value = 2200;
+      const start = now + 0.12 + i * 0.2;
+      const noteDur = 0.85;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(volume * 0.15, start + 0.07);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + noteDur);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(start);
+      osc.stop(start + noteDur + 0.05);
+    }
+
+    for (let i = 0; i < 4; i++) {
+      birdChirp(
+        now + 0.55 + i * 0.58,
+        volume * random(0.32, 0.5),
+        random(1800, 2400),
+        random(2800, 3800),
+        random(0.07, 0.12)
+      );
+    }
+  }
+
   function playRainbowSound(sizeKey, options = {}) {
     if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
     const big = sizeKey === "big" || sizeKey === "wow";
-    const volume = (big ? 0.11 : sizeKey === "small" ? 0.065 : 0.085) * (sizeKey === "wow" ? 1.1 : 1);
-    const shimmerNotes = big ? [523, 659, 784, 988, 1175] : [523, 659, 784];
+    const rv = SOUND_VARIANTS.rainbow[pickSoundVariant()];
+    const volume = (big ? 0.11 : sizeKey === "small" ? 0.065 : 0.085) * (sizeKey === "wow" ? 1.1 : 1) * rv.volMult;
+    const shimmerNotes = (big ? [523, 659, 784, 988, 1175] : [523, 659, 784]).map((n) =>
+      pitchShiftFreq(n, rv.pitchShift)
+    );
 
     for (let i = 0; i < shimmerNotes.length; i++) {
       const osc = audioCtx.createOscillator();
@@ -1724,9 +2047,12 @@
 
     const now = audioCtx.currentTime;
     const bright = mode === "bright";
-    let volume = bright ? 0.27 : size === "big" ? 0.2 : size === "medium" ? 0.15 : 0.11;
+    const pv = SOUND_VARIANTS.pop[pickSoundVariant()];
+    let volume = (bright ? 0.27 : size === "big" ? 0.2 : size === "medium" ? 0.15 : 0.11) * pv.volMult;
     const boomDur = size === "big" ? 0.28 : size === "medium" ? 0.22 : 0.16;
     const sizzleDur = size === "big" ? 0.55 : size === "medium" ? 0.42 : 0.3;
+    const boomStart = (bright ? 130 : size === "big" ? 95 : 110) * pv.pitchMult * pv.boomMult;
+    const boomEnd = (bright ? 55 : 38) * pv.pitchMult;
 
     function noiseBurst(at, vol, durationSec, filterType, freq, q) {
       const len = Math.max(1, Math.floor(audioCtx.sampleRate * durationSec));
@@ -1757,8 +2083,8 @@
     const boomGain = audioCtx.createGain();
     const boomFilter = audioCtx.createBiquadFilter();
     boom.type = "sine";
-    boom.frequency.setValueAtTime(bright ? 130 : size === "big" ? 95 : 110, now);
-    boom.frequency.exponentialRampToValueAtTime(bright ? 55 : 38, now + boomDur);
+    boom.frequency.setValueAtTime(boomStart, now);
+    boom.frequency.exponentialRampToValueAtTime(boomEnd, now + boomDur);
     boomFilter.type = "lowpass";
     boomFilter.frequency.setValueAtTime(bright ? 240 : 180, now);
     boomFilter.frequency.exponentialRampToValueAtTime(60, now + boomDur);
@@ -1843,5 +2169,6 @@
   scheduleNextAmbientSpawn();
   scheduleNextShootingStar();
   scheduleNextThunder();
+  scheduleNextConstellation();
   loop();
 })();

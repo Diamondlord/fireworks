@@ -51,4 +51,4 @@ Trail tips: draw a line, release, wait a moment — effects ripple along the pat
 
 ## Customize
 
-Edit `fireworks.js` — burst sizes (`BURST_SIZES`), rainbow sizes (`ARC_RADIUS_RANGE`), trail timing (`PLAN_STAGGER_DELAY`), colors, and sound volumes.
+Edit `fireworks.js` — burst sizes (`BURST_SIZES`), rainbow sizes (`ARC_RADIUS_RANGE`), trail timing (`PLAN_STAGGER_DELAY`), seasonal sky palettes (`SEASON_PALETTES`), colors, and sound volumes.
