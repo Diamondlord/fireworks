@@ -29,8 +29,8 @@
 
   const MAX_RAIN_DROPS = 140;
   const SKY_BLEND_SPEED = 0.012;
-  const ARC_APPEAR_SPEED = 0.014;
-  const ARC_DECAY = 0.0024;
+  const ARC_APPEAR_SPEED = 0.018;
+  const ARC_DECAY = 0.0055;
 
   const pointer = {
     active: false,
@@ -56,12 +56,13 @@
     medium: [68, 92],
     big: [95, 125],
   };
-  const RAINBOW_HUES = [0, 25, 45, 100, 200, 260, 290];
+  const RAINBOW_HUES = [0, 32, 55, 95, 145, 210, 275];
 
   const GRAVITY = 0.028;
   const DRAG = 0.992;
   const DRAG_THRESHOLD = 10;
-  const PLAN_SPACING = 36;
+  const PLAN_SPACING_NIGHT = 36;
+  const PLAN_SPACING_DAY = 100;
   const PLAN_START_DELAY = 320;
   const PLAN_STAGGER_DELAY = 85;
 
@@ -77,13 +78,6 @@
   function arcRadiusForSize(sizeKey) {
     const range = ARC_RADIUS_RANGE[sizeKey] || ARC_RADIUS_RANGE.medium;
     return random(range[0], range[1]);
-  }
-
-  function arcFormAngles() {
-    const form = pickRandom(["wide", "round", "tall"]);
-    if (form === "wide") return { start: Math.PI * 1.04, end: -Math.PI * 0.04 };
-    if (form === "round") return { start: Math.PI * 1.12, end: -Math.PI * 0.12 };
-    return { start: Math.PI * 1.24, end: -Math.PI * 0.24 };
   }
 
   function resize() {
@@ -214,19 +208,20 @@
   }
 
   function createArc(clickX, clickY, targetRadius, maxAlpha, isDouble) {
-    const angles = arcFormAngles();
     return {
-      cx: clickX,
-      cy: clickY + targetRadius * random(0.72, 0.92),
+      x: clickX,
+      y: clickY,
+      span: targetRadius * random(1.4, 1.85),
+      lift: targetRadius * random(1.05, 1.45),
+      wobble: random(-0.18, 0.18),
+      bend: random(-0.22, 0.22),
       targetRadius,
-      startAngle: angles.start,
-      endAngle: angles.end,
       radius: 0,
       appear: 0,
       appearSpeed: ARC_APPEAR_SPEED + random(-0.002, 0.002),
       alpha: 0,
       maxAlpha,
-      decay: ARC_DECAY + random(-0.0006, 0.0006),
+      decay: ARC_DECAY + random(-0.0008, 0.0008),
       double: isDouble,
     };
   }
@@ -247,27 +242,60 @@
   function drawRainbowArc(arc) {
     if (arc.radius <= 0) return;
 
-    const band = arc.radius / RAINBOW_HUES.length;
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
+    const scale = arc.radius / arc.targetRadius;
+    const span = arc.span * scale;
+    const lift = arc.lift * scale;
+    const alpha = arc.alpha;
+    const wob = arc.wobble * scale;
+    const bend = arc.bend;
+    const bandCount = RAINBOW_HUES.length;
+    const bandW = Math.max(3.5, (arc.radius / bandCount) * 1.15);
+    const bandStep = bandW * 1.05;
 
-    for (let i = 0; i < RAINBOW_HUES.length; i++) {
-      const outerR = arc.radius - band * i;
-      const innerR = Math.max(0, arc.radius - band * (i + 1));
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    for (let i = 0; i < bandCount; i++) {
+      const inset = i * bandStep;
+      const spanBand = Math.max(span * 0.4, span - inset * 0.9);
+      const liftBand = Math.max(lift * 0.4, lift - inset * 0.65);
+      const yOff = inset * 0.12;
+      const x0 = arc.x - spanBand;
+      const x1 = arc.x + spanBand;
+      const y0 = arc.y + yOff;
+      const cp1x = arc.x - spanBand * 0.52 + span * wob * 0.3;
+      const cp2x = arc.x + spanBand * 0.52 + span * wob * 0.18;
+      const cp1y = arc.y - liftBand * (1 + bend * 0.12);
+      const cp2y = arc.y - liftBand * (1 - bend * 0.12);
+
       ctx.beginPath();
-      ctx.arc(arc.cx, arc.cy, outerR, arc.startAngle, arc.endAngle);
-      ctx.arc(arc.cx, arc.cy, innerR, arc.endAngle, arc.startAngle, true);
-      ctx.closePath();
-      ctx.fillStyle = `hsla(${RAINBOW_HUES[i]}, 92%, 55%, ${arc.alpha * 0.92})`;
-      ctx.fill();
+      ctx.moveTo(x0, y0);
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x1, y0);
+      ctx.strokeStyle = `hsla(${RAINBOW_HUES[i]}, 92%, 50%, ${alpha * 0.9})`;
+      ctx.lineWidth = bandW;
+      ctx.stroke();
     }
 
-    ctx.globalCompositeOperation = "lighter";
-    ctx.strokeStyle = `rgba(255, 255, 255, ${arc.alpha * 0.22})`;
-    ctx.lineWidth = Math.max(2, band * 0.75);
-    ctx.beginPath();
-    ctx.arc(arc.cx, arc.cy, arc.radius - band * 0.5, arc.startAngle, arc.endAngle);
-    ctx.stroke();
+    if (alpha > 0.25) {
+      ctx.globalCompositeOperation = "lighter";
+      const glowSpan = span * 0.55;
+      const glowLift = lift * 0.88;
+      ctx.beginPath();
+      ctx.moveTo(arc.x - glowSpan, arc.y + bandW * 0.15);
+      ctx.bezierCurveTo(
+        arc.x - glowSpan * 0.45 + span * wob * 0.18,
+        arc.y - glowLift * (1 + bend * 0.1),
+        arc.x + glowSpan * 0.45 + span * wob * 0.12,
+        arc.y - glowLift * (1 - bend * 0.1),
+        arc.x + glowSpan,
+        arc.y + bandW * 0.15
+      );
+      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.08})`;
+      ctx.lineWidth = bandW * 1.4;
+      ctx.stroke();
+    }
+
     ctx.restore();
   }
 
@@ -413,12 +441,13 @@
   }
 
   function extendPlan(x, y) {
+    const spacing = isDayMode ? PLAN_SPACING_DAY : PLAN_SPACING_NIGHT;
     const dx = x - pointer.lastPlanX;
     const dy = y - pointer.lastPlanY;
     const dist = Math.hypot(dx, dy);
-    if (dist < PLAN_SPACING) return;
+    if (dist < spacing) return;
 
-    const steps = Math.floor(dist / PLAN_SPACING);
+    const steps = Math.floor(dist / spacing);
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
       addPlanPoint(pointer.lastPlanX + dx * t, pointer.lastPlanY + dy * t);
