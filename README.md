@@ -19,3 +19,9 @@ Tap the **moon** button to switch back to **night mode** — stars, moon, and fi
 | Expand button | Fullscreen | Fullscreen |
 
 No install — open `index.html` and refresh after edits.
+
+## Live site (GitHub Pages)
+
+After enabling **Settings → Pages → Source: GitHub Actions**, pushes to `main` deploy automatically.
+
+URL: **https://diamondlord.github.io/fireworks/**
