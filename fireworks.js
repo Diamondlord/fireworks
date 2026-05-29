@@ -34,6 +34,11 @@
   let nextShootingStarAt = 0;
   let celestialPulsePhase = 0;
   let lastInputAt = 0;
+  let clouds = [];
+  let fireflies = [];
+  let rainStartedAt = 0;
+  let thunderFlash = 0;
+  let nextThunderAt = 0;
 
   const MAX_RAIN_DROPS = 140;
   const LONG_PRESS_MS = 500;
@@ -47,6 +52,10 @@
   const IDLE_SPARKLE_MS = 25000;
   const SHOOTING_STAR_MIN_MS = 120000;
   const SHOOTING_STAR_MAX_MS = 240000;
+  const FIREFLY_COUNT = 4;
+  const THUNDER_MIN_MS = 30000;
+  const THUNDER_MAX_MS = 60000;
+  const POST_RAIN_MIN_MS = 3000;
   const SKY_BLEND_SPEED = 0.012;
   const ARC_APPEAR_SPEED = 0.018;
   const ARC_DECAY = 0.0055;
@@ -201,22 +210,40 @@
     skyCtx.arc(sunX, sunY, 22, 0, Math.PI * 2);
     skyCtx.fill();
 
-    const cloudPositions = [
-      [width * 0.18, height * 0.22, 1],
-      [width * 0.45, height * 0.12, 0.85],
-      [width * 0.62, height * 0.28, 1.1],
-      [width * 0.32, height * 0.38, 0.75],
-      [width * 0.78, height * 0.42, 0.9],
-    ];
-    for (const [cx, cy, sc] of cloudPositions) {
-      drawCloudBlob(skyCtx, cx, cy, sc);
-    }
     return c;
+  }
+
+  function initClouds() {
+    clouds = [
+      { x: width * 0.18, y: height * 0.22, scale: 1, speed: 0.08 },
+      { x: width * 0.45, y: height * 0.12, scale: 0.85, speed: 0.06 },
+      { x: width * 0.62, y: height * 0.28, scale: 1.1, speed: 0.07 },
+      { x: width * 0.32, y: height * 0.38, scale: 0.75, speed: 0.05 },
+      { x: width * 0.78, y: height * 0.42, scale: 0.9, speed: 0.065 },
+    ];
+  }
+
+  function initFireflies() {
+    fireflies = [];
+    for (let i = 0; i < FIREFLY_COUNT; i++) {
+      const y = random(height * 0.55, height * 0.88);
+      fireflies.push({
+        x: random(width * 0.08, width * 0.92),
+        y,
+        baseY: y,
+        phase: random(0, Math.PI * 2),
+        speed: random(0.03, 0.06),
+        bobAmp: random(4, 10),
+        driftX: random(-0.12, 0.12),
+      });
+    }
   }
 
   function buildSky() {
     nightSkyCanvas = buildNightSky();
     daySkyCanvas = buildDaySky();
+    initClouds();
+    initFireflies();
   }
 
   function updateSkyBlend() {
@@ -257,6 +284,116 @@
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  function updateClouds() {
+    for (const c of clouds) {
+      c.x -= c.speed;
+      if (c.x < -120) c.x = width + 120;
+    }
+  }
+
+  function drawClouds() {
+    if (clouds.length === 0 || skyBlend <= 0.02) return;
+    ctx.save();
+    ctx.globalAlpha = skyBlend * 0.92;
+    for (const c of clouds) {
+      drawCloudBlob(ctx, c.x, c.y, c.scale);
+    }
+    ctx.restore();
+  }
+
+  function updateFireflies() {
+    for (const f of fireflies) {
+      f.phase += f.speed;
+      f.x += f.driftX;
+      f.y = f.baseY + Math.sin(f.phase) * f.bobAmp;
+      if (f.x < -20) f.x = width + 20;
+      if (f.x > width + 20) f.x = -20;
+    }
+  }
+
+  function drawFireflies() {
+    if (fireflies.length === 0 || skyBlend >= 0.98) return;
+    ctx.save();
+    ctx.globalAlpha = 1 - skyBlend;
+    ctx.globalCompositeOperation = "lighter";
+    for (const f of fireflies) {
+      const glow = 0.45 + Math.sin(f.phase * 1.3) * 0.55;
+      ctx.fillStyle = `rgba(255, 230, 90, ${glow * 0.85})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(255, 248, 160, ${glow * 0.22})`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function scheduleNextThunder() {
+    nextThunderAt = Date.now() + random(THUNDER_MIN_MS, THUNDER_MAX_MS);
+  }
+
+  function playThunderRumble() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const len = Math.floor(audioCtx.sampleRate * 0.5);
+    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 1.5);
+    }
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 120;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.045, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    source.start(now);
+    source.stop(now + 0.52);
+  }
+
+  function tickThunder() {
+    if (!isRaining || skyBlend > 0.35) return;
+    const now = Date.now();
+    if (nextThunderAt === 0) scheduleNextThunder();
+    if (now < nextThunderAt) return;
+    scheduleNextThunder();
+    thunderFlash = 0.2;
+    initAudio();
+    playThunderRumble();
+  }
+
+  function updateThunderFlash() {
+    if (thunderFlash > 0) thunderFlash *= 0.86;
+    if (thunderFlash < 0.006) thunderFlash = 0;
+  }
+
+  function drawThunderFlash() {
+    if (thunderFlash <= 0) return;
+    ctx.save();
+    ctx.fillStyle = `rgba(215, 225, 255, ${thunderFlash})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+
+  function spawnPostRainRainbow() {
+    const cx = width * 0.5;
+    const cy = height * 0.72;
+    const arc = createArc(cx, cy, width * 0.4, 0.8);
+    arc.decay = 0.0026;
+    arc.appearSpeed = 0.011;
+    arcs.push(arc);
+    initAudio();
+    playRainbowSound("medium");
   }
 
   function drawCelestialPulse() {
@@ -1122,11 +1259,15 @@
     if (rainBtn) rainBtn.classList.toggle("active", isRaining);
     updateCustomCursor();
     if (isRaining) {
+      rainStartedAt = Date.now();
       initRaindrops();
       startRainSound();
     } else {
+      const hadRain = rainStartedAt > 0 && Date.now() - rainStartedAt >= POST_RAIN_MIN_MS;
       raindrops = [];
       stopRainSound();
+      if (hadRain && isDayMode) spawnPostRainRainbow();
+      rainStartedAt = 0;
     }
   }
 
@@ -1134,8 +1275,12 @@
     updateSkyBlend();
     drawSky();
     drawCelestialPulse();
+    updateClouds();
+    drawClouds();
     updateStars();
     drawStars();
+    updateFireflies();
+    drawFireflies();
     tickShootingStarSpawner();
     updateShootingStars();
     drawShootingStars();
@@ -1161,8 +1306,11 @@
     if (particles.length > 0) {
       drawParticles();
     }
+    tickThunder();
+    updateThunderFlash();
     updateRain();
     drawRain();
+    drawThunderFlash();
     drawLongPressHint();
   }
 
@@ -1694,5 +1842,6 @@
   resize();
   scheduleNextAmbientSpawn();
   scheduleNextShootingStar();
+  scheduleNextThunder();
   loop();
 })();

@@ -24,11 +24,11 @@ No install or build step.
 
 ## Modes
 
-**Night** — dark sky, twinkling stars, moon, fireworks. A wandering star may drift by; rarely, a shooting star streaks across. Cursor: ✨
+**Night** — dark sky, twinkling stars, moon, fireworks, fireflies near the bottom. A wandering star may drift by; rarely, a shooting star streaks across. Cursor: ✨
 
-**Day** — blue sky, clouds, sun, rainbow arcs. A butterfly may flutter by sometimes. Cursor: 🦋
+**Day** — blue sky, drifting clouds, sun, rainbow arcs. A butterfly may flutter by sometimes. Stop rain to see a soft rainbow. Cursor: 🦋
 
-**Rain** (either mode) — falling drops + rain sound. Cursor: 🦄
+**Rain** (either mode) — falling drops + rain sound. At night, an occasional gentle lightning flash. Cursor: 🦄
 
 ## Controls
 
