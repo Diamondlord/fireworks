@@ -30,6 +30,10 @@
   let touchPress = null;
   let ambientCreatures = [];
   let nextAmbientSpawnAt = 0;
+  let shootingStars = [];
+  let nextShootingStarAt = 0;
+  let celestialPulsePhase = 0;
+  let lastInputAt = 0;
 
   const MAX_RAIN_DROPS = 140;
   const LONG_PRESS_MS = 500;
@@ -40,6 +44,9 @@
   const AMBIENT_LIFE_MIN_MS = 8000;
   const AMBIENT_LIFE_MAX_MS = 14000;
   const AMBIENT_FADE_MS = 1200;
+  const IDLE_SPARKLE_MS = 25000;
+  const SHOOTING_STAR_MIN_MS = 120000;
+  const SHOOTING_STAR_MAX_MS = 240000;
   const SKY_BLEND_SPEED = 0.012;
   const ARC_APPEAR_SPEED = 0.018;
   const ARC_DECAY = 0.0055;
@@ -87,6 +94,13 @@
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
+  function noteInput() {
+    lastInputAt = Date.now();
+  }
+
+  function celestialPosition() {
+    return { x: width * 0.82, y: height * 0.14 };
+  }
 
   function arcRadiusForSize(sizeKey) {
     const range = ARC_RADIUS_RANGE[sizeKey] || ARC_RADIUS_RANGE.medium;
@@ -243,6 +257,151 @@
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  function drawCelestialPulse() {
+    celestialPulsePhase += 0.014;
+    const pulse = 0.82 + Math.sin(celestialPulsePhase) * 0.18;
+    const { x, y } = celestialPosition();
+
+    if (skyBlend < 0.98) {
+      ctx.save();
+      ctx.globalAlpha = (1 - skyBlend) * pulse * 0.4;
+      ctx.globalCompositeOperation = "lighter";
+      const moonGlow = ctx.createRadialGradient(x, y, 0, x, y, 95 * pulse);
+      moonGlow.addColorStop(0, "rgba(255, 248, 220, 0.55)");
+      moonGlow.addColorStop(0.45, "rgba(255, 248, 220, 0.12)");
+      moonGlow.addColorStop(1, "rgba(255, 248, 220, 0)");
+      ctx.fillStyle = moonGlow;
+      ctx.beginPath();
+      ctx.arc(x, y, 95 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (skyBlend > 0.02) {
+      ctx.save();
+      ctx.globalAlpha = skyBlend * pulse * 0.35;
+      ctx.globalCompositeOperation = "lighter";
+      const sunGlow = ctx.createRadialGradient(x, y, 0, x, y, 110 * pulse);
+      sunGlow.addColorStop(0, "rgba(255, 230, 80, 0.5)");
+      sunGlow.addColorStop(0.4, "rgba(255, 210, 60, 0.15)");
+      sunGlow.addColorStop(1, "rgba(255, 200, 50, 0)");
+      ctx.fillStyle = sunGlow;
+      ctx.beginPath();
+      ctx.arc(x, y, 110 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function scheduleNextShootingStar() {
+    nextShootingStarAt = Date.now() + random(SHOOTING_STAR_MIN_MS, SHOOTING_STAR_MAX_MS);
+  }
+
+  function playShootingStarSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(920, now);
+    osc.frequency.exponentialRampToValueAtTime(480, now + 0.28);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.035, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.35);
+  }
+
+  function spawnShootingStar() {
+    const fromLeft = Math.random() > 0.5;
+    const speed = random(11, 16);
+    shootingStars.push({
+      x: fromLeft ? random(-40, width * 0.25) : random(width * 0.75, width + 40),
+      y: random(height * 0.05, height * 0.32),
+      vx: (fromLeft ? 1 : -1) * speed,
+      vy: random(2.5, 5.5),
+      bornAt: Date.now(),
+      lifeMs: 900,
+    });
+    initAudio();
+    playShootingStarSound();
+  }
+
+  function tickShootingStarSpawner() {
+    if (skyBlend > 0.35) return;
+    const now = Date.now();
+    if (nextShootingStarAt === 0) scheduleNextShootingStar();
+    if (now < nextShootingStarAt) return;
+    scheduleNextShootingStar();
+    spawnShootingStar();
+  }
+
+  function updateShootingStars() {
+    const now = Date.now();
+    for (let i = shootingStars.length - 1; i >= 0; i--) {
+      const s = shootingStars[i];
+      if (now - s.bornAt >= s.lifeMs) {
+        shootingStars.splice(i, 1);
+        continue;
+      }
+      s.x += s.vx;
+      s.y += s.vy;
+    }
+  }
+
+  function drawShootingStars() {
+    if (shootingStars.length === 0 || skyBlend >= 0.98) return;
+
+    const now = Date.now();
+    ctx.save();
+    ctx.globalAlpha = 1 - skyBlend;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round";
+
+    for (const s of shootingStars) {
+      const age = (now - s.bornAt) / s.lifeMs;
+      const alpha = 1 - age;
+      const tailLen = 72;
+      const speed = Math.hypot(s.vx, s.vy) || 1;
+      const nx = s.vx / speed;
+      const ny = s.vy / speed;
+      const x0 = s.x - nx * tailLen;
+      const y0 = s.y - ny * tailLen;
+      const grad = ctx.createLinearGradient(x0, y0, s.x, s.y);
+      grad.addColorStop(0, "rgba(255, 255, 255, 0)");
+      grad.addColorStop(0.55, `rgba(210, 225, 255, ${alpha * 0.35})`);
+      grad.addColorStop(1, `rgba(255, 255, 255, ${alpha * 0.95})`);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.5 + alpha * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(s.x, s.y);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function triggerIdleSparkle() {
+    const margin = 90;
+    const x = random(margin, Math.max(margin + 1, width - margin));
+    const y = random(margin, Math.max(margin + 1, height - margin));
+    if (isDayMode) {
+      spawnRainbowArc(x, y, "small", { silent: true });
+    } else {
+      spawnBurst(x, y, "small", () => random(0, 360), 0.65);
+    }
+  }
+
+  function tickIdleSparkle() {
+    if (pointer.active || touchPress) return;
+    if (Date.now() - lastInputAt < IDLE_SPARKLE_MS) return;
+    noteInput();
+    triggerIdleSparkle();
   }
 
   function createAmbientStar() {
@@ -974,11 +1133,16 @@
   function drawFrame() {
     updateSkyBlend();
     drawSky();
+    drawCelestialPulse();
     updateStars();
     drawStars();
+    tickShootingStarSpawner();
+    updateShootingStars();
+    drawShootingStars();
     tickAmbientSpawner();
     updateAmbient();
     drawAmbient();
+    tickIdleSparkle();
     const trailMix = skyBlend;
     const nightTrail = 0.07;
     const dayTrail = 0.06;
@@ -1045,6 +1209,7 @@
 
   function triggerWowEffect(x, y) {
     initAudio();
+    navigator.vibrate?.(30);
     if (isDayMode) {
       spawnRainbowArc(x, y, "wow");
     } else {
@@ -1053,6 +1218,7 @@
   }
 
   function beginPointer(clientX, clientY, button) {
+    noteInput();
     initAudio();
     const { x, y } = getCanvasCoords(clientX, clientY);
     pointer.active = true;
@@ -1467,6 +1633,7 @@
     rainBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); resetPointer(); });
     rainBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      noteInput();
       resetPointer();
       toggleRain();
     });
@@ -1476,6 +1643,7 @@
     daynightBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); resetPointer(); });
     daynightBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      noteInput();
       resetPointer();
       toggleDayNight();
     });
@@ -1485,6 +1653,7 @@
     fullscreenBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); resetPointer(); });
     fullscreenBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      noteInput();
       resetPointer();
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen().catch(() => {});
@@ -1521,7 +1690,9 @@
 
   updateDayNightUi();
   window.addEventListener("resize", resize);
+  noteInput();
   resize();
   scheduleNextAmbientSpawn();
+  scheduleNextShootingStar();
   loop();
 })();
