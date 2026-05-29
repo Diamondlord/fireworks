@@ -24,9 +24,9 @@ No install or build step.
 
 ## Modes
 
-**Night** — dark sky, stars, moon, fireworks. Cursor: ✨
+**Night** — dark sky, stars, moon, fireworks. A ✨ may drift across the sky now and then. Cursor: ✨
 
-**Day** — blue sky, clouds, sun, rainbow arcs. Cursor: 🦋
+**Day** — blue sky, clouds, sun, rainbow arcs. A 🦋 may flutter by sometimes. Cursor: 🦋
 
 **Rain** (either mode) — falling drops + rain sound. Cursor: 🦄
 
@@ -35,11 +35,11 @@ No install or build step.
 | Action | Night | Day |
 |---|---|---|
 | Left click / tap | One-color firework (random size) | Rainbow arc at click (random size & shape) |
-| Right click | Rainbow ring burst | Big double rainbow |
+| Right click / **long-press** (~½ sec) | Rainbow ring burst | Extra-big rainbow |
 | Drag + release | Glowing dots → fireworks pop **one by one** along the trail | Glowing dots → rainbows grow **one by one** along the trail |
 | Rain button | Rain on/off | Rain on/off |
 
-Trail tips: draw a line, release, wait a moment — effects ripple along the path with sound. Single clicks work anywhere on the sky.
+Trail tips: draw a line, release, wait a moment — effects ripple along the path with sound. Single clicks work anywhere on the sky. On iPad, hold your finger still for the special rainbow burst (a ring grows while you wait).
 
 ## Files
 

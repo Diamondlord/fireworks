@@ -26,8 +26,20 @@
   let raindrops = [];
   let rainNoise = null;
   let rainGain = null;
+  let stars = [];
+  let touchPress = null;
+  let ambientCreatures = [];
+  let nextAmbientSpawnAt = 0;
 
   const MAX_RAIN_DROPS = 140;
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_LIMIT = 14;
+  const MAX_AMBIENT = 1;
+  const AMBIENT_SPAWN_MIN_MS = 20000;
+  const AMBIENT_SPAWN_MAX_MS = 40000;
+  const AMBIENT_LIFE_MIN_MS = 8000;
+  const AMBIENT_LIFE_MAX_MS = 14000;
+  const AMBIENT_FADE_MS = 1200;
   const SKY_BLEND_SPEED = 0.012;
   const ARC_APPEAR_SPEED = 0.018;
   const ARC_DECAY = 0.0055;
@@ -55,6 +67,7 @@
     small: [42, 62],
     medium: [68, 92],
     big: [95, 125],
+    wow: [130, 175],
   };
   const RAINBOW_HUES = [0, 32, 55, 95, 145, 210, 275];
 
@@ -86,6 +99,8 @@
     canvas.width = width;
     canvas.height = height;
     buildSky();
+    ambientCreatures = [];
+    scheduleNextAmbientSpawn();
     if (isRaining) initRaindrops();
   }
 
@@ -131,16 +146,17 @@
     skyCtx.arc(moonX, moonY, 18, 0, Math.PI * 2);
     skyCtx.fill();
 
+    stars = [];
     const starCount = Math.floor(random(100, 151));
     for (let i = 0; i < starCount; i++) {
-      const x = Math.random() * width;
-      const y = Math.random() * height * 0.85;
-      const radius = random(0.4, 1.4);
-      const alpha = random(0.35, 1);
-      skyCtx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-      skyCtx.beginPath();
-      skyCtx.arc(x, y, radius, 0, Math.PI * 2);
-      skyCtx.fill();
+      stars.push({
+        x: Math.random() * width,
+        y: Math.random() * height * 0.85,
+        radius: random(0.4, 1.4),
+        baseAlpha: random(0.35, 1),
+        phase: random(0, Math.PI * 2),
+        speed: random(0.02, 0.05),
+      });
     }
     return c;
   }
@@ -207,7 +223,208 @@
     }
   }
 
-  function createArc(clickX, clickY, targetRadius, maxAlpha, isDouble) {
+  function updateStars() {
+    for (const s of stars) {
+      s.phase += s.speed;
+    }
+  }
+
+  function drawStars() {
+    if (stars.length === 0 || skyBlend >= 0.98) return;
+
+    ctx.save();
+    ctx.globalAlpha = 1 - skyBlend;
+    ctx.globalCompositeOperation = "lighter";
+    for (const s of stars) {
+      const twinkle = 0.55 + Math.sin(s.phase) * 0.45;
+      ctx.fillStyle = `rgba(255, 255, 255, ${s.baseAlpha * twinkle})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function createAmbientStar() {
+    const fromLeft = Math.random() > 0.5;
+    return {
+      kind: "star",
+      x: fromLeft ? -20 : width + 20,
+      y: random(height * 0.15, height * 0.45),
+      vx: (fromLeft ? 1 : -1) * random(0.4, 0.9),
+      vy: random(-0.15, -0.05),
+      phase: random(0, Math.PI * 2),
+      bornAt: Date.now(),
+      lifeMs: random(AMBIENT_LIFE_MIN_MS, AMBIENT_LIFE_MAX_MS),
+      size: random(18, 26),
+      wobbleAmp: random(4, 8),
+      wobbleSpeed: random(0.04, 0.07),
+    };
+  }
+
+  function createAmbientButterfly() {
+    const fromLeft = Math.random() > 0.5;
+    return {
+      kind: "butterfly",
+      x: fromLeft ? -30 : width + 30,
+      y: random(height * 0.25, height * 0.65),
+      vx: (fromLeft ? 1 : -1) * random(0.35, 0.58),
+      vy: random(-0.05, 0.05),
+      phase: random(0, Math.PI * 2),
+      bornAt: Date.now(),
+      lifeMs: random(14000, 22000),
+      size: random(32, 42),
+      wobbleAmp: random(10, 22),
+      wobbleSpeed: random(0.05, 0.09),
+    };
+  }
+
+  function scheduleNextAmbientSpawn() {
+    nextAmbientSpawnAt = Date.now() + random(AMBIENT_SPAWN_MIN_MS, AMBIENT_SPAWN_MAX_MS);
+  }
+
+  function removeAmbientAt(index) {
+    ambientCreatures.splice(index, 1);
+    if (ambientCreatures.length === 0) {
+      scheduleNextAmbientSpawn();
+    }
+  }
+
+  function tickAmbientSpawner() {
+    if (ambientCreatures.length >= MAX_AMBIENT) return;
+
+    const now = Date.now();
+    if (nextAmbientSpawnAt === 0) scheduleNextAmbientSpawn();
+    if (now < nextAmbientSpawnAt) return;
+
+    if (isDayMode) {
+      ambientCreatures.push(createAmbientButterfly());
+    } else {
+      ambientCreatures.push(createAmbientStar());
+    }
+  }
+
+  function updateAmbient() {
+    const now = Date.now();
+    for (let i = ambientCreatures.length - 1; i >= 0; i--) {
+      const c = ambientCreatures[i];
+      if ((c.kind === "butterfly" && !isDayMode) || (c.kind === "star" && isDayMode)) {
+        removeAmbientAt(i);
+        continue;
+      }
+      const age = now - c.bornAt;
+      if (age >= c.lifeMs) {
+        removeAmbientAt(i);
+        continue;
+      }
+      c.x += c.vx;
+      c.y += c.vy;
+      c.phase += c.wobbleSpeed;
+      if ((c.vx > 0 && c.x > width + 80) || (c.vx < 0 && c.x < -80)) {
+        removeAmbientAt(i);
+      }
+    }
+  }
+
+  function ambientAlpha(c) {
+    const age = Date.now() - c.bornAt;
+    const fadeIn = Math.min(1, age / AMBIENT_FADE_MS);
+    const fadeOut = Math.min(1, (c.lifeMs - age) / AMBIENT_FADE_MS);
+    const twinkle = c.kind === "star" ? 0.85 + 0.15 * Math.sin(c.phase) : 1;
+    return fadeIn * fadeOut * twinkle;
+  }
+
+  function drawCanvasFlyingStar(x, y, size, alpha) {
+    const outer = size * 0.5;
+    const inner = outer * 0.38;
+    ctx.fillStyle = `rgba(255, 248, 210, ${alpha})`;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI / 4) * i - Math.PI / 2;
+      const r = i % 2 === 0 ? outer : inner;
+      const px = x + Math.cos(angle) * r;
+      const py = y + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawCanvasButterfly(x, y, size, phase, vx, alpha) {
+    const flap = 0.4 + Math.abs(Math.sin(phase * 2.5)) * 0.6;
+    const wingW = size * 0.52 * flap;
+    const wingH = size * 0.3;
+
+    ctx.save();
+    ctx.translate(x, y);
+    if (vx < 0) ctx.scale(-1, 1);
+
+    ctx.fillStyle = `rgba(45, 30, 55, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 2.5, size * 0.34, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255, 130, 50, ${alpha * 0.95})`;
+    ctx.beginPath();
+    ctx.ellipse(-wingW * 0.5, -size * 0.1, wingW * 0.55, wingH, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(wingW * 0.5, -size * 0.1, wingW * 0.55, wingH, 0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255, 80, 160, ${alpha * 0.9})`;
+    ctx.beginPath();
+    ctx.ellipse(-wingW * 0.45, size * 0.14, wingW * 0.48, wingH * 0.75, 0.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(wingW * 0.45, size * 0.14, wingW * 0.48, wingH * 0.75, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(-wingW * 0.35, -size * 0.08, size * 0.05, 0, Math.PI * 2);
+    ctx.arc(wingW * 0.35, -size * 0.08, size * 0.05, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawAmbientCreature(c) {
+    const alpha = ambientAlpha(c);
+    if (alpha <= 0.01) return;
+
+    const drawY = c.y + Math.sin(c.phase) * c.wobbleAmp;
+
+    ctx.save();
+    ctx.globalAlpha = 1;
+
+    if (c.kind === "star") {
+      ctx.globalCompositeOperation = "lighter";
+      const glowR = c.size * 0.9;
+      const glow = ctx.createRadialGradient(c.x, drawY, 0, c.x, drawY, glowR);
+      glow.addColorStop(0, `rgba(255, 248, 200, ${alpha * 0.45})`);
+      glow.addColorStop(1, "rgba(255, 248, 200, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(c.x, drawY, glowR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+      drawCanvasFlyingStar(c.x, drawY, c.size, alpha);
+    } else {
+      drawCanvasButterfly(c.x, drawY, c.size, c.phase, c.vx, alpha);
+    }
+
+    ctx.restore();
+  }
+
+  function drawAmbient() {
+    for (const c of ambientCreatures) {
+      drawAmbientCreature(c);
+    }
+  }
+
+  function createArc(clickX, clickY, targetRadius, maxAlpha) {
     return {
       x: clickX,
       y: clickY,
@@ -222,20 +439,14 @@
       alpha: 0,
       maxAlpha,
       decay: ARC_DECAY + random(-0.0008, 0.0008),
-      double: isDouble,
     };
   }
 
   function spawnRainbowArc(clickX, clickY, sizeKey, options = {}) {
     const targetRadius = arcRadiusForSize(sizeKey);
-    arcs.push(createArc(clickX, clickY, targetRadius, 1, !!options.double));
-    if (options.double) {
-      const outerRadius = targetRadius * random(1.28, 1.42);
-      arcs.push(createArc(clickX, clickY, outerRadius, 0.55, false));
-    }
+    arcs.push(createArc(clickX, clickY, targetRadius, 1));
     if (!options.silent) {
-      const soundSize = sizeKey === "big" ? "big" : sizeKey === "small" ? "small" : "medium";
-      playRainbowSound(soundSize, options);
+      playRainbowSound(sizeKey, options);
     }
   }
 
@@ -414,13 +625,22 @@
 
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    const halo = ctx.createRadialGradient(x, y, 8, x, y, 55);
-    halo.addColorStop(0, "rgba(255, 255, 255, 0.5)");
-    halo.addColorStop(0.35, "rgba(255, 220, 120, 0.2)");
+    const flash = ctx.createRadialGradient(x, y, 0, x, y, 28);
+    flash.addColorStop(0, "rgba(255, 255, 255, 0.85)");
+    flash.addColorStop(0.4, "rgba(255, 240, 180, 0.35)");
+    flash.addColorStop(1, "rgba(255, 220, 120, 0)");
+    ctx.fillStyle = flash;
+    ctx.beginPath();
+    ctx.arc(x, y, 28, 0, Math.PI * 2);
+    ctx.fill();
+
+    const halo = ctx.createRadialGradient(x, y, 8, x, y, 75);
+    halo.addColorStop(0, "rgba(255, 255, 255, 0.55)");
+    halo.addColorStop(0.35, "rgba(255, 220, 120, 0.25)");
     halo.addColorStop(1, "rgba(255, 200, 80, 0)");
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(x, y, 55, 0, Math.PI * 2);
+    ctx.arc(x, y, 75, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
@@ -526,7 +746,7 @@
 
   function updatePlanMarkers() {
     for (const m of planMarkers) {
-      m.pulse += 0.12;
+      m.pulse += 0.13;
     }
   }
 
@@ -538,15 +758,15 @@
 
     for (let i = 0; i < planMarkers.length; i++) {
       const m = planMarkers[i];
-      const pulse = 0.45 + Math.sin(m.pulse) * 0.25;
-      const r = 5 + Math.sin(m.pulse * 0.7) * 1.5;
+      const pulse = 0.46 + Math.sin(m.pulse) * 0.22;
+      const r = 5 + Math.sin(m.pulse * 0.7) * 1.6;
 
-      ctx.fillStyle = `hsla(${m.hue}, 85%, 78%, ${pulse})`;
+      ctx.fillStyle = `hsla(${m.hue}, 85%, 76%, ${pulse})`;
       ctx.beginPath();
       ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = `hsla(${m.hue}, 90%, 88%, ${pulse * 0.5})`;
+      ctx.strokeStyle = `hsla(${m.hue}, 90%, 86%, ${pulse * 0.45})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(m.x, m.y, r + 4, 0, Math.PI * 2);
@@ -754,6 +974,11 @@
   function drawFrame() {
     updateSkyBlend();
     drawSky();
+    updateStars();
+    drawStars();
+    tickAmbientSpawner();
+    updateAmbient();
+    drawAmbient();
     const trailMix = skyBlend;
     const nightTrail = 0.07;
     const dayTrail = 0.06;
@@ -774,6 +999,23 @@
     }
     updateRain();
     drawRain();
+    drawLongPressHint();
+  }
+
+  function drawLongPressHint() {
+    if (!touchPress || touchPress.wowFired || !pointer.active || pointer.dragging) return;
+
+    const elapsed = Date.now() - touchPress.startTime;
+    const progress = Math.min(1, elapsed / LONG_PRESS_MS);
+    const { x, y } = getCanvasCoords(touchPress.clientX, touchPress.clientY);
+
+    ctx.save();
+    ctx.strokeStyle = `hsla(${(progress * 360) | 0}, 90%, 65%, ${0.35 + progress * 0.45})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, 8 + progress * 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function loop() {
@@ -796,7 +1038,19 @@
     pointer.planPoints = [];
   }
 
+  function clearTouchPress() {
+    if (touchPress?.timer) clearTimeout(touchPress.timer);
+    touchPress = null;
+  }
 
+  function triggerWowEffect(x, y) {
+    initAudio();
+    if (isDayMode) {
+      spawnRainbowArc(x, y, "wow");
+    } else {
+      burstRainbowRing(x, y);
+    }
+  }
 
   function beginPointer(clientX, clientY, button) {
     initAudio();
@@ -812,11 +1066,7 @@
     pointer.planPoints = [];
 
     if (button === 2) {
-      if (isDayMode) {
-        spawnRainbowArc(x, y, "big", { double: true });
-      } else {
-        burstRainbowRing(x, y);
-      }
+      triggerWowEffect(x, y);
       pointer.active = false;
     }
   }
@@ -880,6 +1130,8 @@
   function toggleDayNight() {
     isDayMode = !isDayMode;
     skyBlendTarget = isDayMode ? 1 : 0;
+    ambientCreatures = [];
+    scheduleNextAmbientSpawn();
     updateDayNightUi();
   }
 
@@ -912,17 +1164,54 @@
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
     const touch = e.touches[0];
+    clearTouchPress();
     beginPointer(touch.clientX, touch.clientY, 0);
+    touchPress = {
+      startTime: Date.now(),
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      wowFired: false,
+    };
+    touchPress.timer = setTimeout(() => {
+      if (pointer.active && !pointer.dragging && touchPress) {
+        const { x, y } = getCanvasCoords(touchPress.clientX, touchPress.clientY);
+        touchPress.wowFired = true;
+        resetPointer();
+        triggerWowEffect(x, y);
+        clearTouchPress();
+      }
+    }, LONG_PRESS_MS);
   });
 
   canvas.addEventListener("touchmove", (e) => {
     e.preventDefault();
-    movePointer(e.touches[0].clientX, e.touches[0].clientY);
+    const touch = e.touches[0];
+    if (touchPress && !pointer.dragging) {
+      const dx = touch.clientX - touchPress.clientX;
+      const dy = touch.clientY - touchPress.clientY;
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_LIMIT) {
+        clearTouchPress();
+      }
+    }
+    if (pointer.dragging && touchPress) {
+      clearTouchPress();
+    }
+    movePointer(touch.clientX, touch.clientY);
   });
 
   canvas.addEventListener("touchend", (e) => {
     e.preventDefault();
+    if (touchPress?.wowFired) {
+      clearTouchPress();
+      return;
+    }
+    clearTouchPress();
     finishPointer(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+  });
+
+  canvas.addEventListener("touchcancel", () => {
+    clearTouchPress();
+    if (pointer.active) resetPointer();
   });
 
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -1076,8 +1365,8 @@
     if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
-    const big = sizeKey === "big" || options.double;
-    const volume = big ? 0.11 : sizeKey === "small" ? 0.065 : 0.085;
+    const big = sizeKey === "big" || sizeKey === "wow";
+    const volume = (big ? 0.11 : sizeKey === "small" ? 0.065 : 0.085) * (sizeKey === "wow" ? 1.1 : 1);
     const shimmerNotes = big ? [523, 659, 784, 988, 1175] : [523, 659, 784];
 
     for (let i = 0; i < shimmerNotes.length; i++) {
@@ -1121,7 +1410,7 @@
 
     const now = audioCtx.currentTime;
     const bright = mode === "bright";
-    let volume = bright ? 0.24 : size === "big" ? 0.2 : size === "medium" ? 0.15 : 0.11;
+    let volume = bright ? 0.27 : size === "big" ? 0.2 : size === "medium" ? 0.15 : 0.11;
     const boomDur = size === "big" ? 0.28 : size === "medium" ? 0.22 : 0.16;
     const sizzleDur = size === "big" ? 0.55 : size === "medium" ? 0.42 : 0.3;
 
@@ -1233,5 +1522,6 @@
   updateDayNightUi();
   window.addEventListener("resize", resize);
   resize();
+  scheduleNextAmbientSpawn();
   loop();
 })();
