@@ -1,28 +1,21 @@
-# Fireworks
+# Fireworks & Rainbows
 
-A simple click-and-play fireworks game for kids. Open in a browser, click or tap anywhere on the night sky, and watch colorful bursts light up the screen.
+A simple game for kids (no text on screen). Open in a browser.
 
-## How to play
+## Modes
 
-1. Open `index.html` in Chrome, Safari, or Firefox (double-click the file, or drag it into a browser window).
-2. Click or tap anywhere to create fireworks.
-3. Use the button in the top-right corner to go fullscreen.
+Tap the **sun** button (top-right) to switch to **day mode** — blue sky, clouds, and **rainbow arcs** instead of fireworks.
 
-Each click creates a burst in a **different random color**. Bursts vary in size — some small, some big — with sparkles and a gentle pop sound.
+Tap the **moon** button to switch back to **night mode** — stars, moon, and fireworks.
 
-## Tips
+## Controls
 
-- **Sound**: Browsers require a click before playing audio. The first tap enables sound automatically.
-- **Tablet**: Works on iPad and other touch devices — tap anywhere like you would with a mouse.
-- **Fullscreen**: Click the expand icon (top-right) for an immersive view without browser bars.
+| Action | Night | Day |
+|---|---|---|
+| Left click / tap | One-color firework | Rainbow arc |
+| Right click | Rainbow ring firework | Big double rainbow |
+| Drag + release | Plan dots → fireworks together | Plan dots → rainbows together |
+| Sun / moon button | Switch to day | Switch to night |
+| Expand button | Fullscreen | Fullscreen |
 
-## Customize
-
-Edit `fireworks.js` to tweak the experience:
-
-- **Colors**: Search for `baseHue` and `hsla` — adjust saturation/lightness values.
-- **Burst sizes**: Change `BURST_SIZES` (particle count and speed).
-- **Night sky**: Edit gradient colors in `buildSky()` (`#0d1033`, `#020208`).
-- **Sound volume**: Adjust `volume` values in `playPopSound()`.
-
-No install or build step required — just edit and refresh the browser.
+No install — open `index.html` and refresh after edits.
