@@ -2,7 +2,9 @@
 
 A simple browser game for young kids — **no text on screen**. Click the sky, change the weather, switch day and night. Built for learning left click vs right click through different visuals and sounds.
 
-**Play online:** [https://diamondlord.github.io/fireworks/](https://diamondlord.github.io/fireworks/)
+## Play online
+
+[https://diamondlord.github.io/fireworks/](https://diamondlord.github.io/fireworks/)
 
 ## How to run locally
 
@@ -46,12 +48,6 @@ Trail tips: draw a line, release, wait a moment — effects ripple along the pat
 | `index.html` | Page shell, canvas, buttons |
 | `style.css` | Layout, floating buttons, custom cursor |
 | `fireworks.js` | Sky, particles, rainbows, rain, sound, input |
-
-## Deploy (GitHub Pages)
-
-Pushes to `main` deploy via GitHub Actions (`.github/workflows/pages.yml`).
-
-One-time: repo **Settings → Pages → Source → GitHub Actions**.
 
 ## Customize
 
