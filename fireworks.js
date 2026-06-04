@@ -144,6 +144,21 @@
   const PLAN_SPACING_DAY = 100;
   const PLAN_START_DELAY = 320;
   const PLAN_STAGGER_DELAY = 85;
+  const PARTICLE_HUE_STEP = 24;
+  const PARTICLE_ALPHA_STEP = 0.2;
+  const MARKER_PULSE_STEP = 0.125;
+  const MAX_TRAIL_SOUND_SESSIONS = 12;
+  const TRAIL_SOUND_HIT_BUDGET = 320;
+  const MIN_POP_SOUND_MS = 50;
+
+  let glowSpriteCache = null;
+  let trailSoundSessions = [];
+  let sharedNoiseBuffers = null;
+  let lastPopSoundAt = 0;
+  let popSoundsInWindow = 0;
+  let popWindowStart = 0;
+  let audioRecoveryAttempted = 0;
+  const MAX_PENDING_TIMERS = 450;
 
   function random(min, max) {
     return min + Math.random() * (max - min);
@@ -155,6 +170,189 @@
 
   function noteInput() {
     lastInputAt = Date.now();
+    ensureAudioReady();
+    pruneStaleTrailSessions();
+  }
+
+  function scheduleTimer(fn, delayMs) {
+    if (pendingTimers.length >= MAX_PENDING_TIMERS) {
+      const dropCount = pendingTimers.length - MAX_PENDING_TIMERS + 80;
+      const dropped = pendingTimers.splice(0, dropCount);
+      for (const id of dropped) clearTimeout(id);
+    }
+    const id = setTimeout(() => {
+      removePendingTimer(id);
+      fn();
+    }, delayMs);
+    pendingTimers.push(id);
+    return id;
+  }
+
+  function removePendingTimer(id) {
+    const idx = pendingTimers.indexOf(id);
+    if (idx >= 0) pendingTimers.splice(idx, 1);
+  }
+
+  function stopTrailSoundSession(session) {
+    if (!session) return;
+    if (session.endTimerId != null) {
+      clearTimeout(session.endTimerId);
+      removePendingTimer(session.endTimerId);
+      session.endTimerId = null;
+    }
+    if (audioCtx) {
+      const now = audioCtx.currentTime;
+      for (const node of session.nodes) {
+        try {
+          if (typeof node.stop === "function") node.stop(now);
+          node.disconnect();
+        } catch (_) {
+          /* already stopped */
+        }
+      }
+    }
+    session.nodes.length = 0;
+    const idx = trailSoundSessions.indexOf(session);
+    if (idx >= 0) trailSoundSessions.splice(idx, 1);
+  }
+
+  function pruneStaleTrailSessions() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    for (let i = trailSoundSessions.length - 1; i >= 0; i--) {
+      const session = trailSoundSessions[i];
+      if (session.nodes.length === 0 || (session.endsAt != null && session.endsAt < now - 0.5)) {
+        stopTrailSoundSession(session);
+      }
+    }
+  }
+
+  function beginTrailSoundSession(durationSec) {
+    const session = {
+      nodes: [],
+      endsAt: audioCtx ? audioCtx.currentTime + durationSec + 0.5 : null,
+      endTimerId: null,
+    };
+    while (trailSoundSessions.length >= MAX_TRAIL_SOUND_SESSIONS) {
+      stopTrailSoundSession(trailSoundSessions[0]);
+    }
+    trailSoundSessions.push(session);
+    return session;
+  }
+
+  function trackSessionSound(session, node) {
+    if (session && node) session.nodes.push(node);
+  }
+
+  function trailSoundMixScale() {
+    return 0.92 / Math.sqrt(Math.max(1, trailSoundSessions.length));
+  }
+
+  function trailSoundHitCount(pointCount) {
+    const sessions = Math.max(1, trailSoundSessions.length);
+    const capped = Math.floor(TRAIL_SOUND_HIT_BUDGET / sessions);
+    return Math.min(pointCount, Math.max(1, capped));
+  }
+
+  function scheduleTrailSessionEnd(session, durationSec) {
+    session.endsAt = audioCtx ? audioCtx.currentTime + durationSec + 0.5 : null;
+    session.endTimerId = scheduleTimer(() => {
+      session.endTimerId = null;
+      stopTrailSoundSession(session);
+    }, Math.ceil((durationSec + 0.4) * 1000));
+  }
+
+  function resetAudioContext() {
+    const sessions = trailSoundSessions.slice();
+    for (const session of sessions) {
+      stopTrailSoundSession(session);
+    }
+    trailSoundSessions = [];
+    try {
+      if (rainNoise) rainNoise.stop();
+    } catch (_) {}
+    rainNoise = null;
+    rainGain = null;
+    try {
+      if (audioCtx) audioCtx.close();
+    } catch (_) {}
+    audioCtx = null;
+    sharedNoiseBuffers = null;
+  }
+
+  function ensureAudioReady() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      sharedNoiseBuffers = null;
+    }
+    if (audioCtx.state === "closed") {
+      resetAudioContext();
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      sharedNoiseBuffers = null;
+    }
+    if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
+      const resumed = audioCtx.resume();
+      if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+    }
+    ensureSharedNoiseBuffers();
+    if (isRaining && !rainNoise) startRainSound();
+    return audioCtx.state !== "closed";
+  }
+
+  function runAudioSafe(fn) {
+    if (!ensureAudioReady()) return;
+    try {
+      fn();
+    } catch (err) {
+      const now = Date.now();
+      if (now - audioRecoveryAttempted < 800) return;
+      audioRecoveryAttempted = now;
+      resetAudioContext();
+      if (!ensureAudioReady()) return;
+      try {
+        fn();
+      } catch (_) {
+        /* give up until next gesture */
+      }
+    }
+  }
+
+  function ensureSharedNoiseBuffers() {
+    if (!audioCtx || sharedNoiseBuffers) return;
+    sharedNoiseBuffers = {};
+    const specs = [
+      ["sizzleShort", 0.1],
+      ["sizzleMed", 0.14],
+      ["popShort", 0.16],
+      ["popMed", 0.22],
+      ["popLong", 0.28],
+      ["sizzleLong", 0.42],
+      ["sizzleBright", 0.12],
+    ];
+    for (const [key, dur] of specs) {
+      const len = Math.max(1, Math.floor(audioCtx.sampleRate * dur));
+      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.8);
+      }
+      sharedNoiseBuffers[key] = { buffer, dur };
+    }
+  }
+
+  function pickNoiseBuffer(durationSec) {
+    ensureSharedNoiseBuffers();
+    if (!sharedNoiseBuffers) return null;
+    let best = sharedNoiseBuffers.sizzleMed;
+    let bestDiff = Infinity;
+    for (const entry of Object.values(sharedNoiseBuffers)) {
+      const diff = Math.abs(entry.dur - durationSec);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = entry;
+      }
+    }
+    return best;
   }
 
   function celestialPosition() {
@@ -1164,7 +1362,7 @@
     }
   }
 
-  function drawRainbowArc(arc) {
+  function drawRainbowArc(arc, heavyLoad) {
     if (arc.radius <= 0) return;
 
     const scale = arc.radius / arc.targetRadius;
@@ -1173,7 +1371,8 @@
     const alpha = arc.alpha;
     const wob = arc.wobble * scale;
     const bend = arc.bend;
-    const bandCount = RAINBOW_HUES.length;
+    const bandCount = heavyLoad ? 4 : RAINBOW_HUES.length;
+    const bandStride = heavyLoad ? 2 : 1;
     const bandW = Math.max(3.5, (arc.radius / bandCount) * 1.15);
     const bandStep = bandW * 1.05;
 
@@ -1181,7 +1380,8 @@
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
-    for (let i = 0; i < bandCount; i++) {
+    for (let bi = 0; bi < bandCount; bi++) {
+      const i = bi * bandStride;
       const inset = i * bandStep;
       const spanBand = Math.max(span * 0.4, span - inset * 0.9);
       const liftBand = Math.max(lift * 0.4, lift - inset * 0.65);
@@ -1202,7 +1402,7 @@
       ctx.stroke();
     }
 
-    if (alpha > 0.25) {
+    if (!heavyLoad && alpha > 0.25) {
       ctx.globalCompositeOperation = "lighter";
       const glowSpan = span * 0.55;
       const glowLift = lift * 0.88;
@@ -1241,8 +1441,9 @@
   }
 
   function drawArcs() {
+    const heavyLoad = arcs.length > 10;
     for (const arc of arcs) {
-      drawRainbowArc(arc);
+      drawRainbowArc(arc, heavyLoad);
     }
   }
 
@@ -1407,54 +1608,66 @@
     initAudio();
 
     if (isDayMode) {
-      const soundTimer = setTimeout(() => {
+      scheduleTimer(() => {
         playRainbowTrailSound(points.length);
       }, PLAN_START_DELAY);
-      pendingTimers.push(soundTimer);
 
       points.forEach((pt, i) => {
-        const timer = setTimeout(() => {
+        scheduleTimer(() => {
           spawnRainbowArc(pt.x, pt.y, pickRandom(["small", "medium", "big"]), { silent: true });
           removeOnePlanMarker(planId);
         }, PLAN_START_DELAY + i * PLAN_STAGGER_DELAY);
-        pendingTimers.push(timer);
       });
 
-      const cleanupTimer = setTimeout(() => {
+      scheduleTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
-      pendingTimers.push(cleanupTimer);
     } else {
-      const soundTimer = setTimeout(() => {
+      scheduleTimer(() => {
         playFireworkTrailSound(points.length);
       }, PLAN_START_DELAY);
-      pendingTimers.push(soundTimer);
 
       points.forEach((pt, i) => {
-        const timer = setTimeout(() => {
+        scheduleTimer(() => {
           const size = pickRandom(["small", "medium", "big"]);
           spawnBurst(pt.x, pt.y, size, () => hue + random(-12, 12), 1, { trail: true });
           removeOnePlanMarker(planId);
         }, PLAN_START_DELAY + i * PLAN_STAGGER_DELAY);
-        pendingTimers.push(timer);
       });
 
-      const cleanupTimer = setTimeout(() => {
+      scheduleTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
-      pendingTimers.push(cleanupTimer);
     }
   }
 
+  function ensureGlowSprite(hue) {
+    const bucket = ((Math.round(hue / 30) * 30) % 360 + 360) % 360;
+    if (!glowSpriteCache) glowSpriteCache = new Map();
+    if (glowSpriteCache.has(bucket)) return glowSpriteCache.get(bucket);
+
+    const size = 160;
+    const c = document.createElement("canvas");
+    c.width = size;
+    c.height = size;
+    const gctx = c.getContext("2d");
+    const cx = size / 2;
+    const cy = size / 2;
+    const glow = gctx.createRadialGradient(cx, cy, 0, cx, cy, 80);
+    glow.addColorStop(0, `hsla(${bucket}, 95%, 70%, 0.35)`);
+    glow.addColorStop(0.5, `hsla(${bucket}, 95%, 60%, 0.12)`);
+    glow.addColorStop(1, `hsla(${bucket}, 95%, 50%, 0)`);
+    gctx.fillStyle = glow;
+    gctx.fillRect(0, 0, size, size);
+    glowSpriteCache.set(bucket, c);
+    return c;
+  }
+
   function drawGlow(x, y, hue) {
+    const sprite = ensureGlowSprite(hue);
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, 80);
-    glow.addColorStop(0, `hsla(${hue}, 95%, 70%, 0.35)`);
-    glow.addColorStop(0.5, `hsla(${hue}, 95%, 60%, 0.12)`);
-    glow.addColorStop(1, `hsla(${hue}, 95%, 50%, 0)`);
-    ctx.fillStyle = glow;
-    ctx.fillRect(x - 80, y - 80, 160, 160);
+    ctx.drawImage(sprite, x - 80, y - 80);
     ctx.restore();
   }
 
@@ -1470,36 +1683,75 @@
     ctx.save();
     ctx.globalCompositeOperation = isDayMode ? "source-over" : "lighter";
 
-    for (let i = 0; i < planMarkers.length; i++) {
-      const m = planMarkers[i];
+    const fillBuckets = new Map();
+    const ringBuckets = new Map();
+    const trailsByPlan = new Map();
+
+    for (const m of planMarkers) {
       const pulse = 0.46 + Math.sin(m.pulse) * 0.22;
+      const pulseQ = Math.round(pulse / MARKER_PULSE_STEP) * MARKER_PULSE_STEP;
       const r = 5 + Math.sin(m.pulse * 0.7) * 1.6;
+      const fillKey = `${m.hue}|${pulseQ}`;
 
-      ctx.fillStyle = `hsla(${m.hue}, 85%, 76%, ${pulse})`;
+      let fillBucket = fillBuckets.get(fillKey);
+      if (!fillBucket) {
+        fillBucket = { hue: m.hue, pulseQ, dots: [] };
+        fillBuckets.set(fillKey, fillBucket);
+      }
+      fillBucket.dots.push({ x: m.x, y: m.y, r });
+
+      let ringBucket = ringBuckets.get(fillKey);
+      if (!ringBucket) {
+        ringBucket = { hue: m.hue, pulseQ, dots: [] };
+        ringBuckets.set(fillKey, ringBucket);
+      }
+      ringBucket.dots.push({ x: m.x, y: m.y, r });
+
+      let trail = trailsByPlan.get(m.planId);
+      if (!trail) {
+        trail = [];
+        trailsByPlan.set(m.planId, trail);
+      }
+      trail.push(m);
+    }
+
+    for (const { hue, pulseQ, dots } of fillBuckets.values()) {
+      ctx.fillStyle = `hsla(${hue}, 85%, 76%, ${pulseQ})`;
       ctx.beginPath();
-      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      for (const d of dots) {
+        ctx.moveTo(d.x + d.r, d.y);
+        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      }
       ctx.fill();
+    }
 
-      ctx.strokeStyle = `hsla(${m.hue}, 90%, 86%, ${pulse * 0.45})`;
-      ctx.lineWidth = 2;
+    ctx.lineWidth = 2;
+    for (const { hue, pulseQ, dots } of ringBuckets.values()) {
+      ctx.strokeStyle = `hsla(${hue}, 90%, 86%, ${pulseQ * 0.45})`;
       ctx.beginPath();
-      ctx.arc(m.x, m.y, r + 4, 0, Math.PI * 2);
+      for (const d of dots) {
+        ctx.moveTo(d.x + d.r + 4, d.y);
+        ctx.arc(d.x, d.y, d.r + 4, 0, Math.PI * 2);
+      }
       ctx.stroke();
     }
 
-    const planIds = [...new Set(planMarkers.map((m) => m.planId))];
-    for (const planId of planIds) {
-      const trail = planMarkers.filter((m) => m.planId === planId);
+    for (const trail of trailsByPlan.values()) {
       if (trail.length < 2) continue;
       if (isDayMode) {
-        ctx.lineWidth = 3;
-        for (let i = 1; i < trail.length; i++) {
-          ctx.strokeStyle = `hsla(${trail[i].hue}, 75%, 65%, 0.35)`;
-          ctx.beginPath();
-          ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
-          ctx.lineTo(trail[i].x, trail[i].y);
-          ctx.stroke();
+        const last = trail[trail.length - 1];
+        const grad = ctx.createLinearGradient(trail[0].x, trail[0].y, last.x, last.y);
+        for (let i = 0; i < trail.length; i++) {
+          grad.addColorStop(i / (trail.length - 1), `hsla(${trail[i].hue}, 75%, 65%, 0.35)`);
         }
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+          ctx.lineTo(trail[i].x, trail[i].y);
+        }
+        ctx.stroke();
       } else {
         ctx.strokeStyle = `hsla(${trail[0].hue}, 70%, 70%, 0.25)`;
         ctx.lineWidth = 2;
@@ -1532,31 +1784,89 @@
       }
 
       if (p.alpha <= 0) {
-        particles.splice(i, 1);
+        const last = particles.length - 1;
+        if (i < last) particles[i] = particles[last];
+        particles.pop();
       }
     }
   }
 
+  function quantizeAlpha(alpha) {
+    return Math.max(0.2, Math.round(alpha / PARTICLE_ALPHA_STEP) * PARTICLE_ALPHA_STEP);
+  }
+
+  function quantizeHue(hue) {
+    return ((Math.round(hue / PARTICLE_HUE_STEP) * PARTICLE_HUE_STEP) % 360 + 360) % 360;
+  }
+
+  function addParticleToBucket(buckets, key, p) {
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(p);
+  }
+
+  function fillParticleBucket(buckets, fillStyleForKey) {
+    for (const [key, items] of buckets) {
+      if (items.length === 0) continue;
+      ctx.fillStyle = fillStyleForKey(key);
+      ctx.beginPath();
+      for (const p of items) {
+        const s = p.size * p.alpha * 2;
+        const half = s * 0.5;
+        ctx.rect(p.x - half, p.y - half, s, s);
+      }
+      ctx.fill();
+    }
+  }
+
   function drawParticles() {
+    if (particles.length === 0) return;
+
+    const mainBuckets = new Map();
+    const ringBuckets = new Map();
+    const sparkleTintBuckets = new Map();
+    const sparkleWhiteBuckets = new Map();
+
+    for (const p of particles) {
+      if (p.alpha <= 0.01) continue;
+      const a = quantizeAlpha(p.alpha);
+      const h = quantizeHue(p.hue);
+
+      if (p.type === "sparkle") {
+        if (p.sparkleTint) {
+          addParticleToBucket(sparkleTintBuckets, `t|${h}|${a}`, p);
+        } else {
+          addParticleToBucket(sparkleWhiteBuckets, `w|${a}`, p);
+        }
+      } else if (p.type === "ring") {
+        addParticleToBucket(ringBuckets, `r|${h}|${a}`, p);
+      } else {
+        addParticleToBucket(mainBuckets, `m|${h}|${a}`, p);
+      }
+    }
+
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
 
-    for (const p of particles) {
-      if (p.type === "sparkle") {
-        const color = p.sparkleTint
-          ? `hsla(${p.hue}, 80%, 85%, ${p.alpha})`
-          : `rgba(255, 255, 240, ${p.alpha * 0.95})`;
-        ctx.fillStyle = color;
-      } else if (p.type === "ring") {
-        ctx.fillStyle = `hsla(${p.hue}, 98%, 68%, ${p.alpha})`;
-      } else {
-        ctx.fillStyle = `hsla(${p.hue}, 95%, 62%, ${p.alpha})`;
-      }
-
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.alpha, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    fillParticleBucket(mainBuckets, (key) => {
+      const parts = key.split("|");
+      return `hsla(${parts[1]}, 95%, 62%, ${parts[2]})`;
+    });
+    fillParticleBucket(ringBuckets, (key) => {
+      const parts = key.split("|");
+      return `hsla(${parts[1]}, 98%, 68%, ${parts[2]})`;
+    });
+    fillParticleBucket(sparkleTintBuckets, (key) => {
+      const parts = key.split("|");
+      return `hsla(${parts[1]}, 80%, 85%, ${parts[2]})`;
+    });
+    fillParticleBucket(sparkleWhiteBuckets, (key) => {
+      const parts = key.split("|");
+      return `rgba(255, 255, 240, ${Number(parts[1]) * 0.95})`;
+    });
 
     ctx.restore();
   }
@@ -1958,15 +2268,10 @@
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   function initAudio() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioCtx.state === "suspended") {
-      audioCtx.resume();
-    }
+    ensureAudioReady();
   }
 
-  function birdChirp(at, vol, startFreq, endFreq, duration) {
+  function birdChirp(at, vol, startFreq, endFreq, duration, session) {
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = "sine";
@@ -1979,38 +2284,58 @@
     gain.connect(audioCtx.destination);
     osc.start(at);
     osc.stop(at + duration + 0.03);
+    if (session) {
+      trackSessionSound(session, osc);
+      trackSessionSound(session, gain);
+    }
   }
 
 
 
   function playFireworkTrailSound(pointCount) {
+    runAudioSafe(() => {
     if (!audioCtx) return;
+    ensureSharedNoiseBuffers();
+
+    const step = PLAN_STAGGER_DELAY / 1000;
+    const duration = Math.max(0, (pointCount - 1) * step) + 0.45;
+    const session = beginTrailSoundSession(duration);
+    const mix = trailSoundMixScale();
+    const hits = trailSoundHitCount(pointCount);
+    const fullSync = hits >= pointCount;
+    const usePad = trailSoundSessions.length <= 4;
 
     const now = audioCtx.currentTime;
     const start = now;
-    const step = PLAN_STAGGER_DELAY / 1000;
-    const duration = pointCount * step + 0.45;
+    const sizzleEntry = sharedNoiseBuffers.sizzleShort;
 
-    const pad = audioCtx.createOscillator();
-    const padGain = audioCtx.createGain();
-    const padFilter = audioCtx.createBiquadFilter();
-    pad.type = "sine";
-    pad.frequency.value = 52;
-    padFilter.type = "lowpass";
-    padFilter.frequency.value = 140;
-    padGain.gain.setValueAtTime(0, start);
-    padGain.gain.linearRampToValueAtTime(0.03, start + 0.05);
-    padGain.gain.setValueAtTime(0.02, start + duration * 0.8);
-    padGain.gain.exponentialRampToValueAtTime(0.001, start + duration + 0.25);
-    pad.connect(padFilter);
-    padFilter.connect(padGain);
-    padGain.connect(audioCtx.destination);
-    pad.start(start);
-    pad.stop(start + duration + 0.3);
+    scheduleTrailSessionEnd(session, duration);
 
-    for (let i = 0; i < pointCount; i++) {
-      const t = start + i * step;
-      const vol = random(0.055, 0.095);
+    if (usePad) {
+      const pad = audioCtx.createOscillator();
+      const padGain = audioCtx.createGain();
+      const padFilter = audioCtx.createBiquadFilter();
+      pad.type = "sine";
+      pad.frequency.value = 52;
+      padFilter.type = "lowpass";
+      padFilter.frequency.value = 140;
+      padGain.gain.setValueAtTime(0, start);
+      padGain.gain.linearRampToValueAtTime(0.03 * mix, start + 0.05);
+      padGain.gain.setValueAtTime(0.02 * mix, start + duration * 0.8);
+      padGain.gain.exponentialRampToValueAtTime(0.001, start + duration + 0.25);
+      pad.connect(padFilter);
+      padFilter.connect(padGain);
+      padGain.connect(audioCtx.destination);
+      pad.start(start);
+      pad.stop(start + duration + 0.3);
+      trackSessionSound(session, pad);
+      trackSessionSound(session, padGain);
+    }
+
+    for (let hi = 0; hi < hits; hi++) {
+      const pointIndex = fullSync ? hi : (hits <= 1 ? 0 : Math.round(hi * (pointCount - 1) / (hits - 1)));
+      const t = start + pointIndex * step;
+      const vol = random(0.055, 0.095) * mix;
       const boomDur = random(0.1, 0.14);
 
       const boom = audioCtx.createOscillator();
@@ -2029,80 +2354,101 @@
       boomGain.connect(audioCtx.destination);
       boom.start(t);
       boom.stop(t + boomDur + 0.02);
+      trackSessionSound(session, boom);
+      trackSessionSound(session, boomGain);
 
-      const len = Math.max(1, Math.floor(audioCtx.sampleRate * boomDur * 0.7));
-      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let j = 0; j < len; j++) {
-        data[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / len, 1.8);
+      if (sizzleEntry) {
+        const sizzle = audioCtx.createBufferSource();
+        sizzle.buffer = sizzleEntry.buffer;
+        const sFilter = audioCtx.createBiquadFilter();
+        sFilter.type = "highpass";
+        sFilter.frequency.value = random(1600, 2200);
+        const sGain = audioCtx.createGain();
+        sGain.gain.setValueAtTime(vol * 0.35, t + 0.02);
+        sGain.gain.exponentialRampToValueAtTime(0.001, t + boomDur * 0.75);
+        sizzle.connect(sFilter);
+        sFilter.connect(sGain);
+        sGain.connect(audioCtx.destination);
+        sizzle.start(t + 0.02);
+        sizzle.stop(t + boomDur * 0.8);
+        trackSessionSound(session, sizzle);
+        trackSessionSound(session, sGain);
       }
-      const sizzle = audioCtx.createBufferSource();
-      sizzle.buffer = buffer;
-      const sFilter = audioCtx.createBiquadFilter();
-      sFilter.type = "highpass";
-      sFilter.frequency.value = random(1600, 2200);
-      const sGain = audioCtx.createGain();
-      sGain.gain.setValueAtTime(vol * 0.35, t + 0.02);
-      sGain.gain.exponentialRampToValueAtTime(0.001, t + boomDur * 0.75);
-      sizzle.connect(sFilter);
-      sFilter.connect(sGain);
-      sGain.connect(audioCtx.destination);
-      sizzle.start(t + 0.02);
-      sizzle.stop(t + boomDur * 0.8);
     }
+    });
   }
 
   function playRainbowTrailSound(pointCount) {
+    runAudioSafe(() => {
     if (!audioCtx) return;
+    ensureSharedNoiseBuffers();
+
+    const step = PLAN_STAGGER_DELAY / 1000;
+    const duration = Math.max(0, (pointCount - 1) * step) + 0.55;
+    const session = beginTrailSoundSession(duration);
+    const mix = trailSoundMixScale();
+    const hits = trailSoundHitCount(pointCount);
+    const fullSync = hits >= pointCount;
+    const usePad = trailSoundSessions.length <= 4;
+    const useChirps = trailSoundSessions.length <= 6;
 
     const now = audioCtx.currentTime;
     const start = now;
-    const step = PLAN_STAGGER_DELAY / 1000;
-    const duration = pointCount * step + 0.55;
     const notes = [523, 587, 659, 698, 784, 880, 988, 784];
 
-    const pad = audioCtx.createOscillator();
-    const padGain = audioCtx.createGain();
-    const padFilter = audioCtx.createBiquadFilter();
-    pad.type = "triangle";
-    pad.frequency.value = 440;
-    padFilter.type = "lowpass";
-    padFilter.frequency.value = 1200;
-    padGain.gain.setValueAtTime(0, start);
-    padGain.gain.linearRampToValueAtTime(0.022, start + 0.06);
-    padGain.gain.setValueAtTime(0.016, start + duration * 0.85);
-    padGain.gain.exponentialRampToValueAtTime(0.001, start + duration + 0.3);
-    pad.connect(padFilter);
-    padFilter.connect(padGain);
-    padGain.connect(audioCtx.destination);
-    pad.start(start);
-    pad.stop(start + duration + 0.35);
+    scheduleTrailSessionEnd(session, duration);
 
-    for (let i = 0; i < pointCount; i++) {
-      const t = start + i * step;
+    if (usePad) {
+      const pad = audioCtx.createOscillator();
+      const padGain = audioCtx.createGain();
+      const padFilter = audioCtx.createBiquadFilter();
+      pad.type = "triangle";
+      pad.frequency.value = 440;
+      padFilter.type = "lowpass";
+      padFilter.frequency.value = 1200;
+      padGain.gain.setValueAtTime(0, start);
+      padGain.gain.linearRampToValueAtTime(0.022 * mix, start + 0.06);
+      padGain.gain.setValueAtTime(0.016 * mix, start + duration * 0.85);
+      padGain.gain.exponentialRampToValueAtTime(0.001, start + duration + 0.3);
+      pad.connect(padFilter);
+      padFilter.connect(padGain);
+      padGain.connect(audioCtx.destination);
+      pad.start(start);
+      pad.stop(start + duration + 0.35);
+      trackSessionSound(session, pad);
+      trackSessionSound(session, padGain);
+    }
+
+    for (let hi = 0; hi < hits; hi++) {
+      const pointIndex = fullSync ? hi : (hits <= 1 ? 0 : Math.round(hi * (pointCount - 1) / (hits - 1)));
+      const t = start + pointIndex * step;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       const filter = audioCtx.createBiquadFilter();
       osc.type = "sine";
-      osc.frequency.value = notes[i % notes.length];
+      osc.frequency.value = notes[pointIndex % notes.length];
       filter.type = "lowpass";
       filter.frequency.value = 2200;
       gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.055, t + 0.015);
+      gain.gain.linearRampToValueAtTime(0.055 * mix, t + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
       osc.connect(filter);
       filter.connect(gain);
       gain.connect(audioCtx.destination);
       osc.start(t);
       osc.stop(t + 0.2);
+      trackSessionSound(session, osc);
+      trackSessionSound(session, gain);
 
-      if (i % 2 === 0) {
-        birdChirp(t + 0.04, 0.035, random(1800, 2400), random(2800, 3600), 0.06);
+      if (useChirps && hi % 2 === 0) {
+        birdChirp(t + 0.04, 0.035 * mix, random(1800, 2400), random(2800, 3600), 0.06, session);
       }
     }
+    });
   }
 
   function playPostRainRainbowSound() {
+    runAudioSafe(() => {
     if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
@@ -2156,9 +2502,11 @@
         random(0.07, 0.12)
       );
     }
+    });
   }
 
   function playRainbowSound(sizeKey, options = {}) {
+    runAudioSafe(() => {
     if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
@@ -2203,10 +2551,23 @@
     if (big) {
       birdChirp(now + 0.55, volume * 0.35, 1800, 2600, 0.14);
     }
+    });
   }
 
   function playPopSound(size, mode = "normal") {
+    runAudioSafe(() => {
     if (!audioCtx) return;
+
+    const wallNow = Date.now();
+    if (wallNow - popWindowStart > 1000) {
+      popWindowStart = wallNow;
+      popSoundsInWindow = 0;
+    }
+    popSoundsInWindow++;
+    if (popSoundsInWindow > 28) return;
+    if (wallNow - lastPopSoundAt < MIN_POP_SOUND_MS && popSoundsInWindow > 12) return;
+    lastPopSoundAt = wallNow;
+    ensureSharedNoiseBuffers();
 
     const now = audioCtx.currentTime;
     const bright = mode === "bright";
@@ -2218,28 +2579,24 @@
     const boomEnd = (bright ? 55 : 38) * pv.pitchMult;
 
     function noiseBurst(at, vol, durationSec, filterType, freq, q) {
-      const len = Math.max(1, Math.floor(audioCtx.sampleRate * durationSec));
-      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < len; i++) {
-        const t = i / len;
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, filterType === "highpass" ? 1.4 : 2);
-      }
+      const entry = pickNoiseBuffer(durationSec);
+      if (!entry) return;
 
       const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
+      source.buffer = entry.buffer;
       const filter = audioCtx.createBiquadFilter();
       filter.type = filterType;
       filter.frequency.value = freq;
       if (q != null) filter.Q.value = q;
       const gain = audioCtx.createGain();
+      const playDur = Math.min(durationSec, entry.dur);
       gain.gain.setValueAtTime(vol, at);
-      gain.gain.exponentialRampToValueAtTime(0.001, at + durationSec);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + playDur);
       source.connect(filter);
       filter.connect(gain);
       gain.connect(audioCtx.destination);
       source.start(at);
-      source.stop(at + durationSec);
+      source.stop(at + playDur + 0.02);
     }
 
     const boom = audioCtx.createOscillator();
@@ -2263,6 +2620,7 @@
     noiseBurst(now + 0.03, volume * (bright ? 0.3 : 0.22), sizzleDur, "highpass", bright ? 2400 : 1800, null);
     noiseBurst(now + 0.05, volume * 0.12, sizzleDur * 0.85, "bandpass", bright ? 1200 : 900, 0.6);
     if (bright) noiseBurst(now + 0.02, volume * 0.15, 0.12, "highpass", 3200, null);
+    });
   }
 
 
