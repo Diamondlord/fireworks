@@ -172,7 +172,8 @@
 
   function noteInput() {
     lastInputAt = Date.now();
-    ensureAudioReady();
+    if (!ensureAudioReady()) return;
+    syncRainSound();
     pruneStaleTrailSessions();
   }
 
@@ -307,8 +308,12 @@
       if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
     }
     ensureSharedNoiseBuffers();
-    if (isRaining && !rainNoise) startRainSound();
     return audioCtx.state !== "closed";
+  }
+
+  function syncRainSound() {
+    if (!isRaining || rainNoise) return;
+    startRainSound();
   }
 
   function runAudioSafe(fn) {
@@ -1944,8 +1949,8 @@
   }
 
   function startRainSound() {
-    initAudio();
     if (rainNoise) return;
+    if (!ensureAudioReady()) return;
 
     const len = audioCtx.sampleRate * 2;
     const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
@@ -1995,6 +2000,7 @@
   }
 
   function toggleRain() {
+    resetPointer();
     isRaining = !isRaining;
     if (rainBtn) rainBtn.classList.toggle("active", isRaining);
     updateCustomCursor();
@@ -2165,20 +2171,22 @@
   function finishPointer(clientX, clientY) {
     if (!pointer.active) return;
 
-    const { x, y } = getCanvasCoords(clientX, clientY);
+    try {
+      const { x, y } = getCanvasCoords(clientX, clientY);
 
-    if (pointer.button === 0) {
-      if (pointer.dragging) {
-        extendPlan(x, y);
-        launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
-      } else if (isDayMode) {
-        spawnRainbowArc(x, y, pickRandom(["small", "medium", "big"]));
-      } else {
-        burstSingleColor(x, y);
+      if (pointer.button === 0) {
+        if (pointer.dragging) {
+          extendPlan(x, y);
+          launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
+        } else if (isDayMode) {
+          spawnRainbowArc(x, y, pickRandom(["small", "medium", "big"]));
+        } else {
+          burstSingleColor(x, y);
+        }
       }
+    } finally {
+      resetPointer();
     }
-
-    resetPointer();
   }
 
   const customCursor = document.getElementById("custom-cursor");
@@ -2202,6 +2210,7 @@
   }
 
   function toggleDayNight() {
+    resetPointer();
     isDayMode = !isDayMode;
     skyBlendTarget = isDayMode ? 1 : 0;
     ambientCreatures = [];
@@ -2243,15 +2252,10 @@
   });
 
   canvas.addEventListener("mouseleave", () => {
-    if (pointer.active) {
-      releasePointer(pointer.lastClientX, pointer.lastClientY);
+    if (pointer.active && pointer.dragging && pointer.planPoints.length > 0) {
+      launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
     }
-  });
-
-  window.addEventListener("blur", () => {
-    if (pointer.active) {
-      releasePointer(pointer.lastClientX, pointer.lastClientY);
-    }
+    if (pointer.active) resetPointer();
   });
 
   canvas.addEventListener("touchstart", (e) => {
@@ -2304,9 +2308,7 @@
 
   canvas.addEventListener("touchcancel", () => {
     clearTouchPress();
-    if (pointer.active) {
-      releasePointer(pointer.lastClientX, pointer.lastClientY);
-    }
+    if (pointer.active) resetPointer();
   });
 
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -2669,11 +2671,12 @@
 
 
   if (rainBtn) {
-    rainBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); resetPointer(); });
+    rainBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); resetPointer(); });
     rainBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      noteInput();
+      e.preventDefault();
       resetPointer();
+      noteInput();
       toggleRain();
     });
   }
