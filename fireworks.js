@@ -76,6 +76,8 @@
     planHue: 0,
     planId: 0,
     planPoints: [],
+    lastClientX: 0,
+    lastClientY: 0,
   };
 
   const BURST_SIZES = {
@@ -188,6 +190,16 @@
     return id;
   }
 
+  /** Trail firework timers — never dropped by the generic timer cap. */
+  function schedulePlanTimer(fn, delayMs) {
+    const id = setTimeout(() => {
+      removePendingTimer(id);
+      fn();
+    }, delayMs);
+    pendingTimers.push(id);
+    return id;
+  }
+
   function removePendingTimer(id) {
     const idx = pendingTimers.indexOf(id);
     if (idx >= 0) pendingTimers.splice(idx, 1);
@@ -256,7 +268,7 @@
 
   function scheduleTrailSessionEnd(session, durationSec) {
     session.endsAt = audioCtx ? audioCtx.currentTime + durationSec + 0.5 : null;
-    session.endTimerId = scheduleTimer(() => {
+    session.endTimerId = schedulePlanTimer(() => {
       session.endTimerId = null;
       stopTrailSoundSession(session);
     }, Math.ceil((durationSec + 0.4) * 1000));
@@ -1608,34 +1620,34 @@
     initAudio();
 
     if (isDayMode) {
-      scheduleTimer(() => {
+      schedulePlanTimer(() => {
         playRainbowTrailSound(points.length);
       }, PLAN_START_DELAY);
 
       points.forEach((pt, i) => {
-        scheduleTimer(() => {
+        schedulePlanTimer(() => {
           spawnRainbowArc(pt.x, pt.y, pickRandom(["small", "medium", "big"]), { silent: true });
           removeOnePlanMarker(planId);
         }, PLAN_START_DELAY + i * PLAN_STAGGER_DELAY);
       });
 
-      scheduleTimer(() => {
+      schedulePlanTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
     } else {
-      scheduleTimer(() => {
+      schedulePlanTimer(() => {
         playFireworkTrailSound(points.length);
       }, PLAN_START_DELAY);
 
       points.forEach((pt, i) => {
-        scheduleTimer(() => {
+        schedulePlanTimer(() => {
           const size = pickRandom(["small", "medium", "big"]);
           spawnBurst(pt.x, pt.y, size, () => hue + random(-12, 12), 1, { trail: true });
           removeOnePlanMarker(planId);
         }, PLAN_START_DELAY + i * PLAN_STAGGER_DELAY);
       });
 
-      scheduleTimer(() => {
+      schedulePlanTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
     }
@@ -2072,9 +2084,11 @@
 
   function getCanvasCoords(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * width;
+    const y = ((clientY - rect.top) / rect.height) * height;
     return {
-      x: ((clientX - rect.left) / rect.width) * width,
-      y: ((clientY - rect.top) / rect.height) * height,
+      x: Math.max(0, Math.min(width, x)),
+      y: Math.max(0, Math.min(height, y)),
     };
   }
 
@@ -2083,6 +2097,13 @@
     pointer.dragging = false;
     pointer.button = null;
     pointer.planPoints = [];
+  }
+
+  function releasePointer(clientX, clientY) {
+    if (!pointer.active) return;
+    const x = clientX ?? pointer.lastClientX;
+    const y = clientY ?? pointer.lastClientY;
+    finishPointer(x, y);
   }
 
   function clearTouchPress() {
@@ -2113,6 +2134,8 @@
     pointer.lastPlanY = y;
     pointer.planHue = random(0, 360);
     pointer.planPoints = [];
+    pointer.lastClientX = clientX;
+    pointer.lastClientY = clientY;
 
     if (button === 2) {
       triggerWowEffect(x, y);
@@ -2123,6 +2146,8 @@
   function movePointer(clientX, clientY) {
     if (!pointer.active || pointer.button !== 0) return;
 
+    pointer.lastClientX = clientX;
+    pointer.lastClientY = clientY;
     const { x, y } = getCanvasCoords(clientX, clientY);
     const dist = Math.hypot(x - pointer.startX, y - pointer.startY);
 
@@ -2199,17 +2224,34 @@
     }
   });
 
+  window.addEventListener("mousemove", (e) => {
+    if (pointer.active && pointer.dragging && e.buttons & 1) {
+      movePointer(e.clientX, e.clientY);
+    }
+  });
+
   canvas.addEventListener("mouseup", (e) => {
     if (pointer.active && (e.button === 0 || e.button === pointer.button)) {
       finishPointer(e.clientX, e.clientY);
     }
   });
 
-  canvas.addEventListener("mouseleave", () => {
-    if (pointer.active && pointer.dragging && pointer.planPoints.length > 0) {
-      launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
+  window.addEventListener("mouseup", (e) => {
+    if (pointer.active && (e.button === 0 || e.button === pointer.button)) {
+      releasePointer(e.clientX, e.clientY);
     }
-    if (pointer.active) resetPointer();
+  });
+
+  canvas.addEventListener("mouseleave", () => {
+    if (pointer.active) {
+      releasePointer(pointer.lastClientX, pointer.lastClientY);
+    }
+  });
+
+  window.addEventListener("blur", () => {
+    if (pointer.active) {
+      releasePointer(pointer.lastClientX, pointer.lastClientY);
+    }
   });
 
   canvas.addEventListener("touchstart", (e) => {
@@ -2262,7 +2304,9 @@
 
   canvas.addEventListener("touchcancel", () => {
     clearTouchPress();
-    if (pointer.active) resetPointer();
+    if (pointer.active) {
+      releasePointer(pointer.lastClientX, pointer.lastClientY);
+    }
   });
 
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
