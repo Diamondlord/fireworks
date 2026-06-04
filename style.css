@@ -24,10 +24,10 @@ body.day-mode {
 
 .toolbar-btn {
   position: fixed;
-  right: 16px;
+  right: 20px;
   z-index: 1000;
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -50,12 +50,8 @@ body.day-mode {
 }
 
 .toolbar-btn-large {
-  width: 72px;
-  height: 72px;
-}
-
-.toolbar-btn-left {
-  right: auto;
+  width: 88px;
+  height: 88px;
 }
 
 #fullscreen-btn {
@@ -63,16 +59,15 @@ body.day-mode {
 }
 
 #daynight-btn {
-  top: calc(50% - 80px);
+  top: calc(50% - 100px);
 }
 
 #rain-btn {
-  top: calc(50% + 8px);
+  top: calc(50% + 12px);
 }
 
 #constellation-btn {
-  left: 16px;
-  top: calc(50% - 22px);
+  top: calc(50% + 116px);
 }
 
 body.day-mode .toolbar-btn {

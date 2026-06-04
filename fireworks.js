@@ -41,8 +41,8 @@
   let thunderFlash = 0;
   let nextThunderAt = 0;
   let postRainRainbows = [];
-  let constellationEvent = null;
-  let cloudShapeEvent = null;
+  let constellationEvents = [];
+  let cloudShapeEvents = [];
   let nextSkyPatternAt = 0;
 
   const MAX_RAIN_DROPS = 140;
@@ -776,10 +776,31 @@
     }
   }
 
+  function pickSkyPatternCenter(forceVisible) {
+    if (forceVisible) {
+      const margin = 90;
+      const rightGutter = 130;
+      return {
+        cx: random(margin, Math.max(margin + 1, width - rightGutter)),
+        cy: random(margin, Math.max(margin + 1, height - margin)),
+      };
+    }
+    return {
+      cx: random(width * 0.22, width * 0.78),
+      cy: random(height * 0.1, height * 0.42),
+    };
+  }
+
+  function skyPatternSpread(forceVisible, minCompact, maxCompact) {
+    if (!forceVisible) return random(minCompact, maxCompact);
+    const base = Math.min(width, height);
+    return random(base * 0.09, base * 0.15);
+  }
+
   function spawnConstellation(options = {}) {
-    const cx = random(width * 0.22, width * 0.78);
-    const cy = random(height * 0.1, height * 0.42);
-    const spread = random(55, 95);
+    const forceVisible = !!options.forceVisible;
+    const { cx, cy } = pickSkyPatternCenter(forceVisible);
+    const spread = skyPatternSpread(forceVisible, 55, 95);
     const templates = [
       { dots: [[0, 0.5], [0.28, 0.32], [0.55, 0.48], [0.82, 0.28], [1, 0.42]], links: [[0, 1], [1, 2], [2, 3], [3, 4]] },
       { dots: [[0, 0.18], [0.22, 0.52], [0.48, 0.12], [0.74, 0.48], [1, 0.2]], links: [[0, 1], [1, 2], [2, 3], [3, 4]] },
@@ -795,7 +816,7 @@
       { dots: [[0.5, 0], [0, 0.55], [1, 0.55]], links: [[0, 1], [1, 2], [2, 0]] },
     ];
     const tpl = pickRandom(templates);
-    constellationEvent = {
+    constellationEvents.push({
       dots: tpl.dots.map(([rx, ry]) => ({
         x: cx + (rx - 0.5) * spread * 2,
         y: cy + ry * spread,
@@ -807,33 +828,34 @@
       glowAt: 3200,
       fadeAt: 7200,
       alpha: 0,
-      forceVisible: !!options.forceVisible,
-    };
+      forceVisible,
+    });
     initAudio();
     playConstellationSound();
   }
 
   function updateConstellation() {
-    if (!constellationEvent) return;
-    const age = Date.now() - constellationEvent.bornAt;
-    if (age >= constellationEvent.lifeMs) {
-      constellationEvent = null;
-      return;
-    }
-    if (age < 800) {
-      constellationEvent.alpha = age / 800;
-    } else if (age > constellationEvent.fadeAt) {
-      constellationEvent.alpha = 1 - (age - constellationEvent.fadeAt) / (constellationEvent.lifeMs - constellationEvent.fadeAt);
-    } else {
-      constellationEvent.alpha = 1;
+    for (let i = constellationEvents.length - 1; i >= 0; i--) {
+      const e = constellationEvents[i];
+      const age = Date.now() - e.bornAt;
+      if (age >= e.lifeMs) {
+        constellationEvents.splice(i, 1);
+        continue;
+      }
+      if (age < 800) {
+        e.alpha = age / 800;
+      } else if (age > e.fadeAt) {
+        e.alpha = 1 - (age - e.fadeAt) / (e.lifeMs - e.fadeAt);
+      } else {
+        e.alpha = 1;
+      }
     }
   }
 
   function drawConstellation() {
-    if (!constellationEvent) return;
-    const nightMix = constellationEvent.forceVisible ? 1 : 1 - skyBlend;
-    if (nightMix <= 0.02) return;
-    const e = constellationEvent;
+    for (const e of constellationEvents) {
+    const nightMix = e.forceVisible ? 1 : 1 - skyBlend;
+    if (nightMix <= 0.02) continue;
     const age = Date.now() - e.bornAt;
     ctx.save();
     ctx.globalAlpha = nightMix * e.alpha;
@@ -873,6 +895,7 @@
     }
 
     ctx.restore();
+    }
   }
 
   function playCloudShapeSound() {
@@ -905,9 +928,9 @@
   }
 
   function spawnCloudShape(options = {}) {
-    const cx = random(width * 0.25, width * 0.75);
-    const cy = random(height * 0.14, height * 0.38);
-    const spread = random(95, 135);
+    const forceVisible = !!options.forceVisible;
+    const { cx, cy } = pickSkyPatternCenter(forceVisible);
+    const spread = skyPatternSpread(forceVisible, 95, 135);
     const templates = [
       { puffs: [[0.38, 0.32, 0.5], [0.62, 0.32, 0.5], [0.5, 0.58, 0.68]] },
       { puffs: [[0.18, 0.42, 0.42], [0.42, 0.38, 0.52], [0.68, 0.4, 0.48], [0.86, 0.36, 0.34]] },
@@ -916,7 +939,7 @@
       { puffs: [[0.5, 0.12, 0.42], [0.28, 0.52, 0.38], [0.72, 0.52, 0.38], [0.36, 0.72, 0.32], [0.64, 0.72, 0.32]] },
     ];
     const tpl = pickRandom(templates);
-    cloudShapeEvent = {
+    cloudShapeEvents.push({
       puffs: tpl.puffs.map(([rx, ry, sc]) => {
         const homeX = cx + (rx - 0.5) * spread * 2;
         const homeY = cy + ry * spread;
@@ -939,14 +962,14 @@
       glowAt: 3200,
       fadeAt: 7200,
       alpha: 0,
-      forceVisible: !!options.forceVisible,
-    };
+      forceVisible,
+    });
     initAudio();
     playCloudShapeSound();
   }
 
   function tickSkyPatternSpawner() {
-    if (constellationEvent || cloudShapeEvent) return;
+    if (constellationEvents.length > 0 || cloudShapeEvents.length > 0) return;
     const now = Date.now();
     if (nextSkyPatternAt === 0) scheduleNextSkyPattern();
     if (now < nextSkyPatternAt) return;
@@ -960,26 +983,27 @@
   }
 
   function updateCloudShape() {
-    if (!cloudShapeEvent) return;
     const now = Date.now();
-    const age = now - cloudShapeEvent.bornAt;
-    if (age >= cloudShapeEvent.lifeMs) {
-      cloudShapeEvent = null;
-      return;
+    for (let i = cloudShapeEvents.length - 1; i >= 0; i--) {
+    const e = cloudShapeEvents[i];
+    const age = now - e.bornAt;
+    if (age >= e.lifeMs) {
+      cloudShapeEvents.splice(i, 1);
+      continue;
     }
     if (age < 800) {
-      cloudShapeEvent.alpha = age / 800;
-    } else if (age > cloudShapeEvent.fadeAt) {
-      cloudShapeEvent.alpha = 1 - (age - cloudShapeEvent.fadeAt) / (cloudShapeEvent.lifeMs - cloudShapeEvent.fadeAt);
+      e.alpha = age / 800;
+    } else if (age > e.fadeAt) {
+      e.alpha = 1 - (age - e.fadeAt) / (e.lifeMs - e.fadeAt);
     } else {
-      cloudShapeEvent.alpha = 1;
+      e.alpha = 1;
     }
 
-    const mergeT = Math.min(1, age / cloudShapeEvent.mergeAt);
+    const mergeT = Math.min(1, age / e.mergeAt);
     const mergeEase = 1 - Math.pow(1 - mergeT, 3);
-    const drift = age > cloudShapeEvent.fadeAt;
+    const drift = age > e.fadeAt;
 
-    for (const puff of cloudShapeEvent.puffs) {
+    for (const puff of e.puffs) {
       if (drift) {
         puff.x += puff.vx;
         puff.y += puff.vy;
@@ -991,13 +1015,13 @@
         if (mergeT > 0.85) puff.scale = puff.homeScale;
       }
     }
+    }
   }
 
   function drawCloudShape() {
-    if (!cloudShapeEvent) return;
-    const dayMix = cloudShapeEvent.forceVisible ? 1 : skyBlend;
-    if (dayMix <= 0.02) return;
-    const e = cloudShapeEvent;
+    for (const e of cloudShapeEvents) {
+    const dayMix = e.forceVisible ? 1 : skyBlend;
+    if (dayMix <= 0.02) continue;
     const age = Date.now() - e.bornAt;
     ctx.save();
     ctx.globalAlpha = dayMix * e.alpha * 0.92;
@@ -1027,6 +1051,7 @@
     }
 
     ctx.restore();
+    }
   }
 
   function drawCelestialPulse() {
@@ -2214,8 +2239,8 @@
     isDayMode = !isDayMode;
     skyBlendTarget = isDayMode ? 1 : 0;
     ambientCreatures = [];
-    constellationEvent = null;
-    cloudShapeEvent = null;
+    constellationEvents = [];
+    cloudShapeEvents = [];
     scheduleNextAmbientSpawn();
     updateDayNightUi();
   }
