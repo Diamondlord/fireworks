@@ -44,7 +44,11 @@
   let constellationEvents = [];
   let cloudShapeEvents = [];
   let nextSkyPatternAt = 0;
+  let cachedSeasonKey = null;
+  let driftParticles = [];
+  let driftKind = null;
 
+  const MAX_DRIFT_PARTICLES = 70;
   const MAX_RAIN_DROPS = 140;
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_LIMIT = 14;
@@ -406,12 +410,100 @@
     return random(range[0], range[1]);
   }
 
+  function scheduleHaptic(ms, duration = 12) {
+    scheduleTimer(() => navigator.vibrate?.(duration), ms);
+  }
+
+  function tickSeasonSky() {
+    const key = getSeasonKey();
+    if (cachedSeasonKey === key) return;
+    cachedSeasonKey = key;
+    buildSky();
+    syncDriftParticles();
+  }
+
+  function activeDriftKind() {
+    const season = getSeasonKey();
+    if (season === "winter" && skyBlend < 0.85) return "snow";
+    if (season === "spring" && skyBlend > 0.35) return "petal";
+    if (season === "fall" && skyBlend > 0.35) return "leaf";
+    return null;
+  }
+
+  function makeDriftParticle(kind) {
+    const petalHue = kind === "leaf" ? pickRandom([18, 28, 38]) : pickRandom([330, 350, 50, 95]);
+    return {
+      kind,
+      x: random(0, width),
+      y: random(-height * 0.2, height),
+      speed: kind === "snow" ? random(0.7, 1.6) : random(0.5, 1.2),
+      drift: random(-0.35, 0.35),
+      size: kind === "snow" ? random(1.5, 3.5) : random(3, 6),
+      rot: random(0, Math.PI * 2),
+      spin: random(-0.025, 0.025),
+      hue: kind === "snow" ? 0 : petalHue,
+      alpha: random(0.35, 0.8),
+    };
+  }
+
+  function syncDriftParticles() {
+    const kind = activeDriftKind();
+    if (kind === driftKind) return;
+    driftKind = kind;
+    driftParticles = [];
+    if (!kind) return;
+    for (let i = 0; i < MAX_DRIFT_PARTICLES; i++) {
+      driftParticles.push(makeDriftParticle(kind));
+    }
+  }
+
+  function updateDriftParticles() {
+    syncDriftParticles();
+    if (driftParticles.length === 0) return;
+    for (let i = 0; i < driftParticles.length; i++) {
+      const d = driftParticles[i];
+      d.y += d.speed;
+      d.x += d.drift;
+      d.rot += d.spin;
+      if (d.y > height + 12 || d.x < -20 || d.x > width + 20) {
+        driftParticles[i] = makeDriftParticle(d.kind);
+        driftParticles[i].y = random(-30, -5);
+      }
+    }
+  }
+
+  function drawDriftParticles() {
+    if (driftParticles.length === 0) return;
+    ctx.save();
+    for (const d of driftParticles) {
+      ctx.globalAlpha = d.alpha * (d.kind === "snow" ? 0.55 + (1 - skyBlend) * 0.35 : 0.45 + skyBlend * 0.4);
+      if (d.kind === "snow") {
+        ctx.fillStyle = "rgba(235, 245, 255, 0.95)";
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = `hsla(${d.hue}, ${d.kind === "leaf" ? 75 : 85}%, ${d.kind === "leaf" ? 55 : 72}%, 0.9)`;
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        ctx.rotate(d.rot);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, d.size, d.size * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
   function resize() {
     width = Math.max(200, window.innerWidth);
     height = window.innerHeight;
     canvas.width = width;
     canvas.height = height;
     buildSky();
+    cachedSeasonKey = getSeasonKey();
+    syncDriftParticles();
     ambientCreatures = [];
     scheduleNextAmbientSpawn();
     if (isRaining) initRaindrops();
@@ -756,24 +848,99 @@
     nextSkyPatternAt = Date.now() + random(SKY_PATTERN_MIN_MS, SKY_PATTERN_MAX_MS);
   }
 
+  const CONSTELLATION_FADE_IN_MS = 800;
+  const CONSTELLATION_CONNECT_AT_MS = 1200;
+  const CONSTELLATION_CONNECT_DUR_MS = 700;
+  const CONSTELLATION_GLOW_AT_MS = 3200;
+  const CONSTELLATION_GLOW_DUR_MS = 900;
+  const CLOUD_SHAPE_FADE_IN_MS = 800;
+  const CLOUD_SHAPE_MERGE_AT_MS = 1100;
+  const CLOUD_SHAPE_GLOW_AT_MS = 3200;
+  const CLOUD_SHAPE_GLOW_DUR_MS = 900;
+
   function playConstellationSound() {
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
-    const notes = [784, 988, 1175];
-    for (let i = 0; i < notes.length; i++) {
+    const t = (ms) => now + ms / 1000;
+
+    function chime(at, freq, vol, durSec) {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = "sine";
-      osc.frequency.value = notes[i];
-      const start = now + 0.9 + i * 0.14;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.028, start + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(vol, at + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + durSec);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      osc.start(start);
-      osc.stop(start + 0.38);
+      osc.start(at);
+      osc.stop(at + durSec + 0.03);
     }
+
+    // Stars twinkling in (fade 0–800ms)
+    chime(t(CONSTELLATION_FADE_IN_MS * 0.55), 880, 0.014, 0.3);
+
+    // Lines drawing between stars (connectAt + connectDur)
+    [659, 784, 988].forEach((freq, i) => {
+      chime(
+        t(CONSTELLATION_CONNECT_AT_MS + 80 + i * (CONSTELLATION_CONNECT_DUR_MS / 3)),
+        freq,
+        0.026,
+        0.42
+      );
+    });
+
+    // Glow burst when the constellation brightens (glowAt + glowDur)
+    const glowAt = t(CONSTELLATION_GLOW_AT_MS);
+    const glowPeak = t(CONSTELLATION_GLOW_AT_MS + CONSTELLATION_GLOW_DUR_MS * 0.55);
+    const glowEnd = t(CONSTELLATION_GLOW_AT_MS + CONSTELLATION_GLOW_DUR_MS + 1600);
+
+    function glowShimmer(at, durSec, vol) {
+      const len = Math.floor(audioCtx.sampleRate * durSec);
+      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        const p = i / len;
+        const env = Math.pow(p, 0.35) * Math.pow(1 - p, 1.1);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(1600, at);
+      filter.frequency.exponentialRampToValueAtTime(4800, at + durSec * 0.75);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(vol, at + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + durSec);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(at);
+      source.stop(at + durSec + 0.02);
+    }
+
+    glowShimmer(glowAt, 0.9, 0.034);
+    [988, 1175, 1319, 1568].forEach((freq, i) => {
+      chime(glowAt + 0.05 + i * 0.1, freq, 0.034, 0.58);
+    });
+
+    for (const freq of [220, 330, 440]) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, glowAt);
+      gain.gain.linearRampToValueAtTime(0.014, glowAt + 0.55);
+      gain.gain.linearRampToValueAtTime(0.011, glowPeak);
+      gain.gain.exponentialRampToValueAtTime(0.001, glowEnd);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(glowAt);
+      osc.stop(glowEnd + 0.05);
+    }
+    scheduleHaptic(CONSTELLATION_GLOW_AT_MS + 80, 18);
   }
 
   function pickSkyPatternCenter(forceVisible) {
@@ -824,8 +991,8 @@
       links: tpl.links,
       bornAt: Date.now(),
       lifeMs: 10000,
-      connectAt: 1200,
-      glowAt: 3200,
+      connectAt: CONSTELLATION_CONNECT_AT_MS,
+      glowAt: CONSTELLATION_GLOW_AT_MS,
       fadeAt: 7200,
       alpha: 0,
       forceVisible,
@@ -842,8 +1009,8 @@
         constellationEvents.splice(i, 1);
         continue;
       }
-      if (age < 800) {
-        e.alpha = age / 800;
+      if (age < CONSTELLATION_FADE_IN_MS) {
+        e.alpha = age / CONSTELLATION_FADE_IN_MS;
       } else if (age > e.fadeAt) {
         e.alpha = 1 - (age - e.fadeAt) / (e.lifeMs - e.fadeAt);
       } else {
@@ -870,7 +1037,7 @@
     }
 
     if (age >= e.connectAt) {
-      const lineAlpha = Math.min(1, (age - e.connectAt) / 700);
+      const lineAlpha = Math.min(1, (age - e.connectAt) / CONSTELLATION_CONNECT_DUR_MS);
       ctx.strokeStyle = `rgba(180, 210, 255, ${lineAlpha * 0.55})`;
       ctx.lineWidth = 1.5;
       for (const [a, b] of e.links) {
@@ -882,7 +1049,7 @@
     }
 
     if (age >= e.glowAt) {
-      const glowA = Math.min(0.32, ((age - e.glowAt) / 900) * 0.32);
+      const glowA = Math.min(0.32, ((age - e.glowAt) / CONSTELLATION_GLOW_DUR_MS) * 0.32);
       for (const d of e.dots) {
         const g = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 22);
         g.addColorStop(0, `rgba(200, 220, 255, ${glowA})`);
@@ -901,30 +1068,105 @@
   function playCloudShapeSound() {
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
-    const len = Math.floor(audioCtx.sampleRate * 0.35);
-    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2) * 0.4;
-    }
-    const source = audioCtx.createBufferSource();
-    source.buffer = buffer;
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = 700;
-    filter.Q.value = 0.5;
-    const gain = audioCtx.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.04, now + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(audioCtx.destination);
-    source.start(now);
-    source.stop(now + 0.48);
+    const t = (ms) => now + ms / 1000;
 
-    birdChirp(now + 0.2, 0.025, 900, 1400, 0.1);
-    birdChirp(now + 0.38, 0.02, 1100, 1600, 0.08);
+    function softWhoosh(at, durSec, vol) {
+      const len = Math.floor(audioCtx.sampleRate * durSec);
+      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2) * 0.4;
+      }
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.value = 700;
+      filter.Q.value = 0.5;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(vol, at + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + durSec);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(at);
+      source.stop(at + durSec + 0.02);
+    }
+
+    // Cloud puffs fading in (0–800ms)
+    softWhoosh(t(CLOUD_SHAPE_FADE_IN_MS * 0.45), 0.28, 0.022);
+
+    // Puffs drifting together (mergeAt ~1100ms)
+    softWhoosh(t(CLOUD_SHAPE_MERGE_AT_MS * 0.55), 0.62, 0.038);
+    birdChirp(t(CLOUD_SHAPE_MERGE_AT_MS + 60), 0.022, 900, 1400, 0.11);
+    birdChirp(t(CLOUD_SHAPE_MERGE_AT_MS + 300), 0.018, 1100, 1600, 0.09);
+
+    // Sunny glow when the cloud brightens (glowAt + glowDur)
+    const glowAt = t(CLOUD_SHAPE_GLOW_AT_MS);
+    const glowPeak = t(CLOUD_SHAPE_GLOW_AT_MS + CLOUD_SHAPE_GLOW_DUR_MS * 0.55);
+    const glowEnd = t(CLOUD_SHAPE_GLOW_AT_MS + CLOUD_SHAPE_GLOW_DUR_MS + 1600);
+
+    function glowShimmer(at, durSec, vol) {
+      const len = Math.floor(audioCtx.sampleRate * durSec);
+      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        const p = i / len;
+        const env = Math.pow(p, 0.35) * Math.pow(1 - p, 1.1);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(1400, at);
+      filter.frequency.exponentialRampToValueAtTime(4200, at + durSec * 0.75);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(vol, at + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + durSec);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      source.start(at);
+      source.stop(at + durSec + 0.02);
+    }
+
+    function sunnyChime(at, freq, vol, durSec) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(vol, at + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + durSec);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(at);
+      osc.stop(at + durSec + 0.03);
+    }
+
+    glowShimmer(glowAt, 0.85, 0.032);
+    [523, 659, 784, 988].forEach((freq, i) => {
+      sunnyChime(glowAt + 0.05 + i * 0.1, freq, 0.032, 0.55);
+    });
+
+    for (const freq of [262, 392, 523]) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, glowAt);
+      gain.gain.linearRampToValueAtTime(0.012, glowAt + 0.55);
+      gain.gain.linearRampToValueAtTime(0.009, glowPeak);
+      gain.gain.exponentialRampToValueAtTime(0.001, glowEnd);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(glowAt);
+      osc.stop(glowEnd + 0.05);
+    }
+    scheduleHaptic(CLOUD_SHAPE_GLOW_AT_MS + 80, 18);
   }
 
   function spawnCloudShape(options = {}) {
@@ -958,8 +1200,8 @@
       }),
       bornAt: Date.now(),
       lifeMs: 10000,
-      mergeAt: 1100,
-      glowAt: 3200,
+      mergeAt: CLOUD_SHAPE_MERGE_AT_MS,
+      glowAt: CLOUD_SHAPE_GLOW_AT_MS,
       fadeAt: 7200,
       alpha: 0,
       forceVisible,
@@ -991,8 +1233,8 @@
       cloudShapeEvents.splice(i, 1);
       continue;
     }
-    if (age < 800) {
-      e.alpha = age / 800;
+    if (age < CLOUD_SHAPE_FADE_IN_MS) {
+      e.alpha = age / CLOUD_SHAPE_FADE_IN_MS;
     } else if (age > e.fadeAt) {
       e.alpha = 1 - (age - e.fadeAt) / (e.lifeMs - e.fadeAt);
     } else {
@@ -1032,7 +1274,7 @@
 
     if (age >= e.glowAt) {
       ctx.globalCompositeOperation = "lighter";
-      const glowA = Math.min(0.22, ((age - e.glowAt) / 900) * 0.22) * e.alpha;
+      const glowA = Math.min(0.22, ((age - e.glowAt) / CLOUD_SHAPE_GLOW_DUR_MS) * 0.22) * e.alpha;
       let gx = 0;
       let gy = 0;
       for (const puff of e.puffs) {
@@ -1492,6 +1734,7 @@
   function createParticle(x, y, angle, speed, hue, type, options = {}) {
     const isSparkle = type === "sparkle";
     const isRing = type === "ring";
+    const isWillow = type === "willow";
     const trail = !!options.trail;
     return {
       x,
@@ -1508,11 +1751,13 @@
           : random(0.002, 0.0028)
         : isRing
           ? random(0.004, 0.007)
-          : isSparkle
-            ? random(0.003, 0.006)
-            : random(0.005, 0.01),
+          : isWillow
+            ? random(0.0025, 0.0045)
+            : isSparkle
+              ? random(0.003, 0.006)
+              : random(0.005, 0.01),
       type,
-      size: isRing ? random(2.5, 4) : isSparkle ? random(1.2, 2.8) : random(2, 4.5),
+      size: isRing ? random(2.5, 4) : isWillow ? random(1.8, 3.2) : isSparkle ? random(1.2, 2.8) : random(2, 4.5),
       sparkleTint: isSparkle ? Math.random() > 0.5 : false,
     };
   }
@@ -1550,10 +1795,64 @@
     }
   }
 
+  function pickBurstStyle() {
+    return pickRandom(["normal", "normal", "normal", "willow", "ring", "heart"]);
+  }
+
+  function spawnWillowBurst(x, y, size, hueFn, particleScale = 1, options = {}) {
+    const cfg = BURST_SIZES[size];
+    const count = Math.floor(cfg.count * particleScale * 0.9);
+    const baseHue = hueFn(0, count);
+    for (let i = 0; i < count; i++) {
+      const angle = random(-Math.PI * 0.92, -Math.PI * 0.08);
+      const speed = random(cfg.speed * 0.45, cfg.speed * 1.05);
+      particles.push(createParticle(x, y, angle, speed, baseHue + random(-18, 18), "willow", options));
+    }
+    const sparkles = Math.floor((size === "big" ? 14 : size === "medium" ? 10 : 6) * particleScale);
+    for (let i = 0; i < sparkles; i++) {
+      const angle = random(-Math.PI * 0.5, Math.PI * 0.5);
+      particles.push(createParticle(x, y, angle, random(0.4, 1.4), baseHue + random(-25, 25), "sparkle", options));
+    }
+  }
+
+  function spawnRingBurst(x, y, size, hueFn, options = {}) {
+    const baseHue = hueFn(0, 1);
+    const shellCount = size === "big" ? 52 : size === "medium" ? 38 : 26;
+    const speed = size === "big" ? 3.1 : size === "medium" ? 2.5 : 2;
+    for (let i = 0; i < shellCount; i++) {
+      const angle = (Math.PI * 2 * i) / shellCount;
+      particles.push(createParticle(x, y, angle, speed + random(-0.12, 0.12), baseHue + random(-10, 10), "ring", options));
+    }
+    if (size !== "small") drawGlow(x, y, baseHue);
+  }
+
+  function spawnHeartBurst(x, y, size, hueFn, options = {}) {
+    const baseHue = hueFn(0, 1);
+    const n = size === "big" ? 56 : size === "medium" ? 42 : 30;
+    const speedScale = size === "big" ? 1.15 : size === "medium" ? 1 : 0.85;
+    for (let i = 0; i < n; i++) {
+      const t = (Math.PI * 2 * i) / n;
+      const hx = 16 * Math.pow(Math.sin(t), 3);
+      const hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      const angle = Math.atan2(hy, hx);
+      const speed = random(1.1, 2.6) * speedScale;
+      particles.push(createParticle(x, y, angle, speed, baseHue + random(-12, 12), "main", options));
+    }
+    if (size !== "small") drawGlow(x, y, baseHue);
+  }
+
+  function spawnStyledBurst(x, y, size, hueFn, particleScale = 1, options = {}) {
+    const style = options.style || pickBurstStyle();
+    if (style === "willow") spawnWillowBurst(x, y, size, hueFn, particleScale, options);
+    else if (style === "ring") spawnRingBurst(x, y, size, hueFn, options);
+    else if (style === "heart") spawnHeartBurst(x, y, size, hueFn, options);
+    else spawnBurst(x, y, size, hueFn, particleScale, options);
+  }
+
   function burstSingleColor(x, y) {
     const baseHue = seasonHue(random(0, 360));
     const size = pickRandom(["small", "medium", "big"]);
-    spawnBurst(x, y, size, () => baseHue + random(-15, 15));
+    spawnStyledBurst(x, y, size, () => baseHue + random(-15, 15));
     playPopSound(size, "normal");
   }
 
@@ -1648,6 +1947,7 @@
     if (points.length === 0) return;
 
     initAudio();
+    const lastPopAt = PLAN_START_DELAY + Math.max(0, points.length - 1) * PLAN_STAGGER_DELAY;
 
     if (isDayMode) {
       schedulePlanTimer(() => {
@@ -1664,6 +1964,8 @@
       schedulePlanTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
+
+      schedulePlanTimer(() => playTrailFinishSound(), lastPopAt + 35);
     } else {
       schedulePlanTimer(() => {
         playFireworkTrailSound(points.length);
@@ -1672,7 +1974,7 @@
       points.forEach((pt, i) => {
         schedulePlanTimer(() => {
           const size = pickRandom(["small", "medium", "big"]);
-          spawnBurst(pt.x, pt.y, size, () => hue + random(-12, 12), 1, { trail: true });
+          spawnStyledBurst(pt.x, pt.y, size, () => hue + random(-12, 12), 1, { trail: true });
           removeOnePlanMarker(planId);
         }, PLAN_START_DELAY + i * PLAN_STAGGER_DELAY);
       });
@@ -1680,6 +1982,8 @@
       schedulePlanTimer(() => {
         removePlanMarkers(planId);
       }, PLAN_START_DELAY + points.length * PLAN_STAGGER_DELAY + 50);
+
+      schedulePlanTimer(() => playTrailFinishSound(), lastPopAt + 35);
     }
   }
 
@@ -1814,8 +2118,8 @@
       const p = particles[i];
       p.x += p.vx;
       p.y += p.vy;
-      p.vy += GRAVITY * (p.type === "ring" ? 0.35 : 1);
-      p.vx *= DRAG;
+      p.vy += GRAVITY * (p.type === "willow" ? 1.45 : p.type === "ring" ? 0.35 : 1);
+      p.vx *= p.type === "willow" ? 0.988 : DRAG;
 
       if (p.appear != null && p.appear < 1) {
         p.appear = Math.min(1, p.appear + p.appearSpeed);
@@ -2043,11 +2347,14 @@
   }
 
   function drawFrame() {
+    tickSeasonSky();
     updateSkyBlend();
     drawSky();
     drawCelestialPulse();
     updateClouds();
     drawClouds();
+    updateDriftParticles();
+    drawDriftParticles();
     updateStars();
     drawStars();
     updateFireflies();
@@ -2128,6 +2435,7 @@
     pointer.dragging = false;
     pointer.button = null;
     pointer.planPoints = [];
+    updateCursorDragState(false);
   }
 
   function releasePointer(clientX, clientY) {
@@ -2186,6 +2494,7 @@
       pointer.dragging = true;
       pointer.planId = nextPlanId++;
       addPlanPoint(pointer.startX, pointer.startY);
+      updateCursorDragState(true);
     }
 
     if (pointer.dragging) {
@@ -2216,6 +2525,11 @@
 
   const customCursor = document.getElementById("custom-cursor");
   let cursorOnScreen = false;
+  function updateCursorDragState(dragging) {
+    if (!customCursor) return;
+    customCursor.classList.toggle("dragging", dragging);
+  }
+
   function updateCustomCursor() {
     if (!customCursor) return;
     if (isRaining) customCursor.textContent = "🦄";
@@ -2623,6 +2937,44 @@
       birdChirp(now + 0.55, volume * 0.35, 1800, 2600, 0.14);
     }
     });
+  }
+
+  function playTrailFinishSound() {
+    runAudioSafe(() => {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(260, now + 0.32);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.048, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.4);
+
+      const entry = pickNoiseBuffer(0.22);
+      if (entry) {
+        const source = audioCtx.createBufferSource();
+        source.buffer = entry.buffer;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.value = 900;
+        const nGain = audioCtx.createGain();
+        nGain.gain.setValueAtTime(0, now + 0.02);
+        nGain.gain.linearRampToValueAtTime(0.028, now + 0.06);
+        nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+        source.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(audioCtx.destination);
+        source.start(now + 0.02);
+        source.stop(now + 0.3);
+      }
+    });
+    navigator.vibrate?.(12);
   }
 
   function playPopSound(size, mode = "normal") {

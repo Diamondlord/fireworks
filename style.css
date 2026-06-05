@@ -89,6 +89,10 @@ body.day-mode #rain-btn.active {
   box-shadow: 0 0 0 3px rgba(60, 120, 200, 0.45);
 }
 
+.toolbar-btn svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+}
+
 #custom-cursor {
   position: fixed;
   left: 0;
@@ -99,9 +103,14 @@ body.day-mode #rain-btn.active {
   z-index: 500;
   transform: translate(-10%, -15%);
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, font-size 0.12s ease, filter 0.12s ease;
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
   user-select: none;
+}
+
+#custom-cursor.dragging {
+  font-size: 56px;
+  filter: drop-shadow(0 0 14px rgba(255, 220, 120, 0.65)) drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
 }
 
 @media (pointer: coarse) {

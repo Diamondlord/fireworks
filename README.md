@@ -18,26 +18,30 @@ No install or build step.
 
 | Button | Where | What it does |
 |---|---|---|
-| Sun / moon | Middle-right (big) | Switch day ↔ night |
-| Rain | Below sun/moon (big) | Toggle rain on/off (lights up blue when on) |
-| Fullscreen | Top-right (small) | Hide browser bars |
+| Fullscreen | Top (small) | Hide browser bars |
+| Sun / moon | Upper stack (big) | Switch day ↔ night |
+| Rain | Middle stack (big) | Toggle rain on/off (lights up blue when on) |
+| Stars / clouds | Lower stack (big) | Night: constellation appears · Day: cloud shape forms (tap again to add more) |
 
 ## Modes
 
-**Night** — dark sky, twinkling stars, moon, fireworks, fireflies near the bottom. A wandering star may drift by; rarely, a shooting star streaks across. Cursor: ✨
+**Night** — dark sky, twinkling stars, moon, fireworks, fireflies near the bottom. A wandering star may drift by; rarely, a shooting star streaks across. **Winter:** gentle snow drift. Cursor: ✨ (grows while dragging)
 
-**Day** — blue sky, drifting clouds, sun, rainbow arcs. A butterfly may flutter by sometimes. Stop rain to see a soft rainbow. Cursor: 🦋
+**Day** — blue sky, drifting clouds, sun, rainbow arcs. A butterfly may flutter by sometimes. Stop rain to see a soft rainbow. **Spring:** petals drift · **Fall:** leaves drift. Cursor: 🦋 (grows while dragging)
 
 **Rain** (either mode) — falling drops + rain sound. At night, an occasional gentle lightning flash. Cursor: 🦄
+
+The sky palette shifts automatically with the season (winter / spring / summer / fall).
 
 ## Controls
 
 | Action | Night | Day |
 |---|---|---|
-| Left click / tap | One-color firework (random size) | Rainbow arc at click (random size & shape) |
+| Left click / tap | Firework burst (random size & shape: normal, willow, ring, or heart) | Rainbow arc at click (random size & shape) |
 | Right click / **long-press** (~½ sec) | Rainbow ring burst | Extra-big rainbow |
-| Drag + release | Glowing dots → fireworks pop **one by one** along the trail | Glowing dots → rainbows grow **one by one** along the trail |
+| Drag + release | Glowing dots → fireworks pop **one by one** along the trail (finish whoosh at the end) | Glowing dots → rainbows grow **one by one** along the trail |
 | Rain button | Rain on/off | Rain on/off |
+| Stars / clouds button | Spawn a constellation (stars connect, then glow with chimes) | Spawn a cloud (puffs merge, then sunny glow) |
 
 Trail tips: draw a line, release, wait a moment — effects ripple along the path with sound. Single clicks work anywhere on the sky. On iPad, hold your finger still for the special rainbow burst (a ring grows while you wait).
 
