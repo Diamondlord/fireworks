@@ -3127,4 +3127,19 @@
   scheduleNextThunder();
   scheduleNextSkyPattern();
   loop();
+
+  window.__fireworksTest = {
+    isRaining: () => isRaining,
+    isDayMode: () => isDayMode,
+    pointerActive: () => pointer.active,
+    pointerDragging: () => pointer.dragging,
+    particleCount: () => particles.length,
+    arcCount: () => arcs.length,
+    planMarkerCount: () => planMarkers.length,
+    constellationCount: () => constellationEvents.length,
+    cloudShapeCount: () => cloudShapeEvents.length,
+    audioState: () => audioCtx?.state ?? "none",
+    seasonKey: () => getSeasonKey(),
+    driftKind: () => driftKind,
+  };
 })();

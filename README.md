@@ -14,6 +14,16 @@ A simple browser game for young kids — **no text on screen**. Click the sky, c
 
 No install or build step.
 
+## Development / testing
+
+End-to-end tests use [Playwright](https://playwright.dev/) and run automatically in GitHub Actions on pull requests and pushes to `main`.
+
+```bash
+npm install
+npm run test:e2e        # headless
+npm run test:e2e:ui     # interactive debugger
+```
+
 ## Buttons (right side)
 
 | Button | Where | What it does |
