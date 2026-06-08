@@ -21,7 +21,7 @@ test.describe("wow burst", () => {
     errors.assertNoErrors();
   });
 
-  test("right click in day mode spawns a wow rainbow arc", async ({ page }) => {
+  test("right click in day mode spawns a double rainbow", async ({ page }) => {
     const errors = trackPageErrors(page);
     await gotoGame(page);
 
@@ -31,13 +31,20 @@ test.describe("wow burst", () => {
 
     await rightClickCanvas(page, 0.45, 0.5);
     await page.waitForFunction(
-      (count) => window.__fireworksTest.arcCount() > count,
+      (count) => window.__fireworksTest.arcCount() >= count + 2,
       before.arcCount,
       { timeout: 3000 }
     );
 
-    const state = await getTestState(page);
+    let state = await getTestState(page);
+    expect(state.lastBurstKind).toBe("wow");
     expect(state.pointerActive).toBe(false);
+
+    const cascadeBefore = state.lastCascadeAt;
+    await page.waitForTimeout(1000);
+    state = await getTestState(page);
+    expect(state.lastCascadeAt).toBe(cascadeBefore);
+
     errors.assertNoErrors();
   });
 });

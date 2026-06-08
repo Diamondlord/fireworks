@@ -47,11 +47,20 @@
   let cachedSeasonKey = null;
   let driftParticles = [];
   let driftKind = null;
+  let lastLeftClickAt = 0;
+  let lastLeftClickX = 0;
+  let lastLeftClickY = 0;
+  let lastBurstKind = "none";
+  let postRainBonusClicksLeft = 0;
+  let lastCascadeAt = 0;
 
   const MAX_DRIFT_PARTICLES = 70;
   const MAX_RAIN_DROPS = 140;
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_LIMIT = 14;
+  const DOUBLE_CLICK_MS = 350;
+  const DOUBLE_CLICK_DISTANCE = 45;
+  const POST_RAIN_BONUS_CLICKS = 3;
   const MAX_AMBIENT = 1;
   const AMBIENT_SPAWN_MIN_MS = 20000;
   const AMBIENT_SPAWN_MAX_MS = 40000;
@@ -1638,12 +1647,152 @@
     };
   }
 
+  function isLightningTrail() {
+    return isRaining && !isDayMode;
+  }
+
+  function applyPostRainBonus(x, y) {
+    if (postRainBonusClicksLeft <= 0) return;
+    postRainBonusClicksLeft--;
+    for (let i = 0; i < 18; i++) {
+      const angle = random(0, Math.PI * 2);
+      particles.push(createParticle(x, y, angle, random(0.5, 2.8), random(0, 360), "sparkle"));
+    }
+  }
+
   function spawnRainbowArc(clickX, clickY, sizeKey, options = {}) {
     const targetRadius = arcRadiusForSize(sizeKey);
     arcs.push(createArc(clickX, clickY, targetRadius, 1));
     if (!options.silent) {
       playRainbowSound(sizeKey, options);
+      applyPostRainBonus(clickX, clickY);
     }
+  }
+
+  function cubicBezier(t, p0, p1, p2, p3) {
+    const u = 1 - t;
+    return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+  }
+
+  function getArcBandGeometry(arc, bandIndex, heavyLoad = false) {
+    const scale = (arc.radius || arc.targetRadius) / arc.targetRadius;
+    const span = arc.span * scale;
+    const lift = arc.lift * scale;
+    const wob = arc.wobble * scale;
+    const bend = arc.bend;
+    const bandCount = heavyLoad ? 4 : RAINBOW_HUES.length;
+    const bandStride = heavyLoad ? 2 : 1;
+    const bandW = Math.max(3.5, ((arc.radius || arc.targetRadius) / bandCount) * 1.15);
+    const bandStep = bandW * 1.05;
+    const i = bandIndex * bandStride;
+    const inset = i * bandStep;
+    const spanBand = Math.max(span * 0.4, span - inset * 0.9);
+    const liftBand = Math.max(lift * 0.4, lift - inset * 0.65);
+    const yOff = inset * 0.12;
+    return {
+      x0: arc.x - spanBand,
+      x1: arc.x + spanBand,
+      y0: arc.y + yOff,
+      cp1x: arc.x - spanBand * 0.52 + span * wob * 0.3,
+      cp2x: arc.x + spanBand * 0.52 + span * wob * 0.18,
+      cp1y: arc.y - liftBand * (1 + bend * 0.12),
+      cp2y: arc.y - liftBand * (1 - bend * 0.12),
+    };
+  }
+
+  function sampleArcBezier(arc, t, heavyLoad = false) {
+    const g = getArcBandGeometry(arc, 3, heavyLoad);
+    return {
+      x: cubicBezier(t, g.x0, g.cp1x, g.cp2x, g.x1),
+      y: cubicBezier(t, g.y0, g.cp1y, g.cp2y, g.y0),
+    };
+  }
+
+  function drawSunWowFlash(x, y) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const halo = ctx.createRadialGradient(x, y, 8, x, y, 90);
+    halo.addColorStop(0, "rgba(255, 255, 220, 0.55)");
+    halo.addColorStop(0.4, "rgba(255, 230, 120, 0.2)");
+    halo.addColorStop(1, "rgba(255, 200, 80, 0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(x, y, 90, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function cascadeArcToParticles(arc) {
+    const idx = arcs.indexOf(arc);
+    if (idx < 0) return;
+    arcs.splice(idx, 1);
+
+    const sampleArc = {
+      ...arc,
+      radius: arc.targetRadius,
+      appear: 1,
+      alpha: arc.maxAlpha,
+    };
+    const count = 55;
+    for (let i = 0; i < count; i++) {
+      const t = count <= 1 ? 0 : i / (count - 1);
+      const pt = sampleArcBezier(sampleArc, t);
+      const hue = RAINBOW_HUES[i % RAINBOW_HUES.length];
+      const fallAngle = Math.PI / 2 + random(-0.55, 0.55);
+      const speed = random(0.9, 2.8);
+      particles.push(createParticle(pt.x, pt.y, fallAngle, speed, hue, "sparkle"));
+      if (i % 2 === 0) {
+        particles.push(createParticle(pt.x, pt.y, fallAngle + random(-0.2, 0.2), speed * 0.75, hue, "main"));
+      }
+    }
+
+    lastCascadeAt = Date.now();
+    playTrailFinishSound();
+    navigator.vibrate?.(12);
+  }
+
+  function createMatchingArc(template, targetRadius, maxAlpha) {
+    const scale = targetRadius / template.targetRadius;
+    return {
+      x: template.x,
+      y: template.y,
+      span: template.span * scale,
+      lift: template.lift * scale,
+      wobble: template.wobble,
+      bend: template.bend,
+      targetRadius,
+      radius: 0,
+      appear: 0,
+      appearSpeed: template.appearSpeed,
+      alpha: 0,
+      maxAlpha,
+      decay: template.decay,
+    };
+  }
+
+  function spawnDayDoubleRainbow(x, y) {
+    initAudio();
+    drawSunWowFlash(x, y);
+    const inner = createArc(x, y, arcRadiusForSize("wow"), 1);
+    arcs.push(inner);
+    playRainbowSound("wow");
+    scheduleTimer(() => {
+      arcs.push(createMatchingArc(inner, inner.targetRadius * 1.3, 1.05));
+      playRainbowSound("wow");
+    }, 150);
+    applyPostRainBonus(x, y);
+    lastBurstKind = "wow";
+  }
+
+  function spawnDayMegaCascade(x, y) {
+    initAudio();
+    const arc = createArc(x, y, arcRadiusForSize("wow"), 1);
+    arc.cascade = true;
+    arcs.push(arc);
+    scheduleTimer(() => cascadeArcToParticles(arc), 750);
+    playRainbowSound("wow");
+    applyPostRainBonus(x, y);
+    lastBurstKind = "mega";
   }
 
   function drawRainbowArc(arc, heavyLoad) {
@@ -1716,6 +1865,9 @@
         const eased = 1 - Math.pow(1 - a.appear, 3);
         a.radius = a.targetRadius * eased;
         a.alpha = a.maxAlpha * eased;
+      } else if (a.cascade) {
+        a.radius = a.targetRadius;
+        a.alpha = a.maxAlpha;
       } else {
         a.radius = a.targetRadius;
         a.alpha -= a.decay;
@@ -1854,6 +2006,44 @@
     const size = pickRandom(["small", "medium", "big"]);
     spawnStyledBurst(x, y, size, () => baseHue + random(-15, 15));
     playPopSound(size, "normal");
+    applyPostRainBonus(x, y);
+  }
+
+  function playGoldenBellSound() {
+    runAudioSafe(() => {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      [392, 523, 659].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + i * 0.06);
+        gain.gain.setValueAtTime(0.0001, now + i * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.14, now + i * 0.06 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.06 + 0.45);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.06);
+        osc.stop(now + i * 0.06 + 0.5);
+      });
+    });
+  }
+
+  function burstGoldenRing(x, y) {
+    const baseHue = 48;
+    const ringCount = 56;
+    for (let i = 0; i < ringCount; i++) {
+      const angle = (Math.PI * 2 * i) / ringCount;
+      particles.push(createParticle(x, y, angle, 2.8 + random(-0.2, 0.2), baseHue + random(-8, 8), "ring"));
+    }
+    for (let i = 0; i < 24; i++) {
+      const angle = random(0, Math.PI * 2);
+      particles.push(createParticle(x, y, angle, random(0.5, 1.8), baseHue + random(-15, 15), "sparkle"));
+    }
+    drawGlow(x, y, baseHue);
+    playGoldenBellSound();
+    lastBurstKind = "golden";
+    navigator.vibrate?.(20);
   }
 
   function burstRainbowRing(x, y) {
@@ -1907,12 +2097,14 @@
     const index = pointer.planPoints.length;
     pointer.planPoints.push({ x, y });
     const markerHue = isDayMode ? (index * 40) % 360 : pointer.planHue;
+    const lightning = isLightningTrail();
     planMarkers.push({
       x,
       y,
-      hue: markerHue,
+      hue: lightning ? 52 : markerHue,
       pulse: random(0, Math.PI * 2),
       planId: pointer.planId,
+      lightning,
     });
   }
 
@@ -2034,21 +2226,25 @@
     const trailsByPlan = new Map();
 
     for (const m of planMarkers) {
-      const pulse = 0.46 + Math.sin(m.pulse) * 0.22;
+      const lightning = m.lightning;
+      const hue = lightning ? 52 + Math.sin(m.pulse * 2.2) * 16 : m.hue;
+      const pulse = lightning
+        ? 0.55 + Math.sin(m.pulse * 1.8) * 0.28
+        : 0.46 + Math.sin(m.pulse) * 0.22;
       const pulseQ = Math.round(pulse / MARKER_PULSE_STEP) * MARKER_PULSE_STEP;
-      const r = 5 + Math.sin(m.pulse * 0.7) * 1.6;
-      const fillKey = `${m.hue}|${pulseQ}`;
+      const r = lightning ? 5.5 + Math.sin(m.pulse * 1.4) * 2 : 5 + Math.sin(m.pulse * 0.7) * 1.6;
+      const fillKey = lightning ? `lightning|${pulseQ}` : `${hue}|${pulseQ}`;
 
       let fillBucket = fillBuckets.get(fillKey);
       if (!fillBucket) {
-        fillBucket = { hue: m.hue, pulseQ, dots: [] };
+        fillBucket = { hue, pulseQ, lightning, dots: [] };
         fillBuckets.set(fillKey, fillBucket);
       }
       fillBucket.dots.push({ x: m.x, y: m.y, r });
 
       let ringBucket = ringBuckets.get(fillKey);
       if (!ringBucket) {
-        ringBucket = { hue: m.hue, pulseQ, dots: [] };
+        ringBucket = { hue, pulseQ, lightning, dots: [] };
         ringBuckets.set(fillKey, ringBucket);
       }
       ringBucket.dots.push({ x: m.x, y: m.y, r });
@@ -2061,8 +2257,10 @@
       trail.push(m);
     }
 
-    for (const { hue, pulseQ, dots } of fillBuckets.values()) {
-      ctx.fillStyle = `hsla(${hue}, 85%, 76%, ${pulseQ})`;
+    for (const { hue, pulseQ, lightning, dots } of fillBuckets.values()) {
+      ctx.fillStyle = lightning
+        ? `hsla(52, 95%, 88%, ${pulseQ})`
+        : `hsla(${hue}, 85%, 76%, ${pulseQ})`;
       ctx.beginPath();
       for (const d of dots) {
         ctx.moveTo(d.x + d.r, d.y);
@@ -2072,8 +2270,10 @@
     }
 
     ctx.lineWidth = 2;
-    for (const { hue, pulseQ, dots } of ringBuckets.values()) {
-      ctx.strokeStyle = `hsla(${hue}, 90%, 86%, ${pulseQ * 0.45})`;
+    for (const { hue, pulseQ, lightning, dots } of ringBuckets.values()) {
+      ctx.strokeStyle = lightning
+        ? `hsla(195, 90%, 92%, ${pulseQ * 0.55})`
+        : `hsla(${hue}, 90%, 86%, ${pulseQ * 0.45})`;
       ctx.beginPath();
       for (const d of dots) {
         ctx.moveTo(d.x + d.r + 4, d.y);
@@ -2098,6 +2298,18 @@
           ctx.lineTo(trail[i].x, trail[i].y);
         }
         ctx.stroke();
+      } else if (trail[0].lightning) {
+        ctx.strokeStyle = `hsla(52, 95%, 88%, ${0.38 + Math.sin(trail[0].pulse) * 0.12})`;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "rgba(180, 220, 255, 0.75)";
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+          ctx.lineTo(trail[i].x, trail[i].y);
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       } else {
         ctx.strokeStyle = `hsla(${trail[0].hue}, 70%, 70%, 0.25)`;
         ctx.lineWidth = 2;
@@ -2335,12 +2547,14 @@
     updateCustomCursor();
     if (isRaining) {
       rainStartedAt = Date.now();
+      postRainBonusClicksLeft = 0;
       initRaindrops();
       startRainSound();
     } else {
       const hadRain = rainStartedAt > 0 && Date.now() - rainStartedAt >= POST_RAIN_MIN_MS;
       raindrops = [];
       stopRainSound();
+      postRainBonusClicksLeft = POST_RAIN_BONUS_CLICKS;
       if (hadRain && isDayMode) spawnPostRainRainbow();
       rainStartedAt = 0;
     }
@@ -2451,12 +2665,52 @@
   }
 
   function triggerWowEffect(x, y) {
-    initAudio();
     navigator.vibrate?.(30);
     if (isDayMode) {
-      spawnRainbowArc(x, y, "wow");
+      spawnDayDoubleRainbow(x, y);
     } else {
+      initAudio();
       burstRainbowRing(x, y);
+      lastBurstKind = "wow";
+    }
+  }
+
+  function handleLeftClick(x, y) {
+    if (pointer.dragging) {
+      extendPlan(x, y);
+      launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
+      return;
+    }
+
+    const now = Date.now();
+    const isMega =
+      lastLeftClickAt > 0 &&
+      now - lastLeftClickAt <= DOUBLE_CLICK_MS &&
+      Math.hypot(x - lastLeftClickX, y - lastLeftClickY) <= DOUBLE_CLICK_DISTANCE;
+
+    if (isMega) {
+      lastLeftClickAt = 0;
+      navigator.vibrate?.(30);
+      if (isDayMode) {
+        spawnDayMegaCascade(x, y);
+      } else {
+        triggerWowEffect(x, y);
+        lastBurstKind = "mega";
+        applyPostRainBonus(x, y);
+      }
+      return;
+    }
+
+    lastLeftClickAt = now;
+    lastLeftClickX = x;
+    lastLeftClickY = y;
+
+    if (isDayMode) {
+      spawnRainbowArc(x, y, pickRandom(["small", "medium", "big"]));
+      lastBurstKind = "normal";
+    } else {
+      burstSingleColor(x, y);
+      lastBurstKind = "normal";
     }
   }
 
@@ -2478,6 +2732,9 @@
 
     if (button === 2) {
       triggerWowEffect(x, y);
+      pointer.active = false;
+    } else if (button === 1) {
+      burstGoldenRing(x, y);
       pointer.active = false;
     }
   }
@@ -2509,14 +2766,7 @@
       const { x, y } = getCanvasCoords(clientX, clientY);
 
       if (pointer.button === 0) {
-        if (pointer.dragging) {
-          extendPlan(x, y);
-          launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
-        } else if (isDayMode) {
-          spawnRainbowArc(x, y, pickRandom(["small", "medium", "big"]));
-        } else {
-          burstSingleColor(x, y);
-        }
+        handleLeftClick(x, y);
       }
     } finally {
       resetPointer();
@@ -2560,7 +2810,7 @@
   }
 
   canvas.addEventListener("mousedown", (e) => {
-    if (e.button === 0 || e.button === 2) {
+    if (e.button === 0 || e.button === 1 || e.button === 2) {
       e.preventDefault();
       beginPointer(e.clientX, e.clientY, e.button);
     }
@@ -3141,5 +3391,9 @@
     audioState: () => audioCtx?.state ?? "none",
     seasonKey: () => getSeasonKey(),
     driftKind: () => driftKind,
+    lastBurstKind: () => lastBurstKind,
+    postRainBonusLeft: () => postRainBonusClicksLeft,
+    hasLightningMarkers: () => planMarkers.some((m) => m.lightning),
+    lastCascadeAt: () => lastCascadeAt,
   };
 })();

@@ -24,6 +24,10 @@ async function getTestState(page) {
     audioState: window.__fireworksTest.audioState(),
     seasonKey: window.__fireworksTest.seasonKey(),
     driftKind: window.__fireworksTest.driftKind(),
+    lastBurstKind: window.__fireworksTest.lastBurstKind(),
+    postRainBonusLeft: window.__fireworksTest.postRainBonusLeft(),
+    hasLightningMarkers: window.__fireworksTest.hasLightningMarkers(),
+    lastCascadeAt: window.__fireworksTest.lastCascadeAt(),
   }));
 }
 

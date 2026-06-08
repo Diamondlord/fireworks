@@ -48,9 +48,12 @@ The sky palette shifts automatically with the season (winter / spring / summer /
 | Action | Night | Day |
 |---|---|---|
 | Left click / tap | Firework burst (random size & shape: normal, willow, ring, or heart) | Rainbow arc at click (random size & shape) |
-| Right click / **long-press** (~½ sec) | Rainbow ring burst | Extra-big rainbow |
+| **Double-click / double-tap** | **Mega rainbow ring burst** | **Mega rainbow shatters into falling colors** |
+| Right click / **long-press** (~½ sec) | Rainbow ring burst | **Double rainbow** — two arcs bloom one after another |
+| **Middle click** | **Golden ring burst + bell chime** | **Golden ring burst + bell chime** |
 | Drag + release | Glowing dots → fireworks pop **one by one** along the trail (finish whoosh at the end) | Glowing dots → rainbows grow **one by one** along the trail |
-| Rain button | Rain on/off | Rain on/off |
+| Drag while **raining** (night) | Lightning-flash trail dots with crackle pops | Same rainbow trail as dry day |
+| Rain button | Rain on/off · **3 sparkle bonus clicks** after rain stops | Rain on/off · **3 sparkle bonus clicks** after rain stops |
 | Stars / clouds button | Spawn a constellation (stars connect, then glow with chimes) | Spawn a cloud (puffs merge, then sunny glow) |
 
 Trail tips: draw a line, release, wait a moment — effects ripple along the path with sound. Single clicks work anywhere on the sky. On iPad, hold your finger still for the special rainbow burst (a ring grows while you wait).
