@@ -7,11 +7,15 @@ test.describe("toolbar input", () => {
     await gotoGame(page);
 
     await page.locator("#fullscreen-btn").click();
+    await page.locator("#play-btn").click();
     await page.locator("#daynight-btn").click();
     await page.locator("#rain-btn").click();
     await page.locator("#constellation-btn").click();
+    await page.locator('.stamp-btn[data-stamp="star"]').click();
+    await page.locator("#trash-btn").click();
     await page.locator("#rain-btn").click();
     await page.locator("#daynight-btn").click();
+    await page.locator("#play-btn").click();
 
     let state = await getTestState(page);
     expect(state.pointerActive).toBe(false);

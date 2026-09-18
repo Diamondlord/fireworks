@@ -1,12 +1,11 @@
 const { test, expect } = require("@playwright/test");
-const { trackPageErrors, getTestState, clickCanvas } = require("./helpers");
+const { trackPageErrors, getTestState, clickCanvas, gotoGame } = require("./helpers");
 
 test.describe("rain regression", () => {
   test("rain toggle and canvas clicks keep working", async ({ page }) => {
     const errors = trackPageErrors(page);
 
-    await page.goto("/");
-    await page.waitForFunction(() => window.__fireworksTest);
+    await gotoGame(page);
 
     await page.locator("#rain-btn").click();
     let state = await getTestState(page);

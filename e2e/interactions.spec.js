@@ -1,12 +1,11 @@
 const { test, expect } = require("@playwright/test");
-const { trackPageErrors, getTestState, clickCanvas } = require("./helpers");
+const { trackPageErrors, getTestState, clickCanvas, gotoGame } = require("./helpers");
 
 test.describe("interactions", () => {
   test("night mode canvas click spawns fireworks", async ({ page }) => {
     const errors = trackPageErrors(page);
 
-    await page.goto("/");
-    await page.waitForFunction(() => window.__fireworksTest);
+    await gotoGame(page);
 
     const before = await getTestState(page);
     expect(before.isDayMode).toBe(false);
@@ -24,8 +23,7 @@ test.describe("interactions", () => {
   test("day mode canvas click spawns rainbow arcs", async ({ page }) => {
     const errors = trackPageErrors(page);
 
-    await page.goto("/");
-    await page.waitForFunction(() => window.__fireworksTest);
+    await gotoGame(page);
     await page.locator("#daynight-btn").click();
 
     const before = await getTestState(page);
@@ -44,8 +42,7 @@ test.describe("interactions", () => {
   test("night mode drag trail finishes and resets pointer", async ({ page }) => {
     const errors = trackPageErrors(page);
 
-    await page.goto("/");
-    await page.waitForFunction(() => window.__fireworksTest);
+    await gotoGame(page);
 
     const canvas = page.locator("#canvas");
     const box = await canvas.boundingBox();
@@ -78,8 +75,7 @@ test.describe("interactions", () => {
   test("constellation button adds a sky pattern at night", async ({ page }) => {
     const errors = trackPageErrors(page);
 
-    await page.goto("/");
-    await page.waitForFunction(() => window.__fireworksTest);
+    await gotoGame(page);
 
     const before = await getTestState(page);
     expect(before.isDayMode).toBe(false);

@@ -9,6 +9,11 @@
   const iconMoon = document.getElementById("icon-moon");
   const rainBtn = document.getElementById("rain-btn");
   const constellationBtn = document.getElementById("constellation-btn");
+  const playBtn = document.getElementById("play-btn");
+  const iconPlay = document.getElementById("icon-play");
+  const iconPause = document.getElementById("icon-pause");
+  const stampTray = document.getElementById("stamp-tray");
+  const trashBtn = document.getElementById("trash-btn");
 
   let width = 0;
   let height = 0;
@@ -53,6 +58,11 @@
   let lastBurstKind = "none";
   let postRainBonusClicksLeft = 0;
   let lastCascadeAt = 0;
+  let isPlaying = false;
+  let stickers = [];
+  let nextStickerId = 1;
+  let selectedStamp = null;
+  let trayDrag = null;
 
   const MAX_DRIFT_PARTICLES = 70;
   const MAX_RAIN_DROPS = 140;
@@ -91,6 +101,8 @@
     planPoints: [],
     lastClientX: 0,
     lastClientY: 0,
+    stickerId: null,
+    composeAction: null,
   };
 
   const BURST_SIZES = {
@@ -155,6 +167,37 @@
   const GRAVITY = 0.028;
   const DRAG = 0.992;
   const DRAG_THRESHOLD = 10;
+  const MAX_STICKERS = 40;
+  const STAMP_EMOJIS = {
+    star: "✨",
+    moon: "🌙",
+    sun: "☀️",
+    heart: "❤️",
+    rainbow: "🌈",
+    butterfly: "🦋",
+    bee: "🐝",
+    bird: "🐦",
+    cloud: "☁️",
+    balloon: "🎈",
+    tree: "🌳",
+    mushroom: "🍄",
+    unicorn: "🦄",
+    rocket: "🚀",
+    flower: "🌸",
+  };
+  const EMOJI_STAMP_GLOW = {
+    unicorn: "255, 230, 255",
+    moon: "220, 230, 255",
+    sun: "255, 230, 120",
+    heart: "255, 120, 160",
+    rainbow: "180, 220, 255",
+    balloon: "255, 110, 130",
+    tree: "140, 220, 140",
+    rocket: "255, 180, 120",
+    bee: "255, 230, 80",
+    mushroom: "255, 160, 140",
+    bird: "140, 200, 255",
+  };
   const PLAN_SPACING_NIGHT = 36;
   const PLAN_SPACING_DAY = 100;
   const PLAN_START_DELAY = 320;
@@ -1539,10 +1582,10 @@
     return fadeIn * fadeOut * twinkle;
   }
 
-  function drawCanvasFlyingStar(x, y, size, alpha) {
+  function drawCanvasFlyingStar(x, y, size, alpha, hue) {
     const outer = size * 0.5;
     const inner = outer * 0.38;
-    ctx.fillStyle = `rgba(255, 248, 210, ${alpha})`;
+    ctx.fillStyle = hue == null ? `rgba(255, 248, 210, ${alpha})` : `hsla(${hue}, 85%, 78%, ${alpha})`;
     ctx.beginPath();
     for (let i = 0; i < 8; i++) {
       const angle = (Math.PI / 4) * i - Math.PI / 2;
@@ -1556,7 +1599,7 @@
     ctx.fill();
   }
 
-  function drawCanvasButterfly(x, y, size, phase, vx, alpha) {
+  function drawCanvasButterfly(x, y, size, phase, vx, alpha, hue = 20, hue2 = 330) {
     const flap = 0.4 + Math.abs(Math.sin(phase * 2.5)) * 0.6;
     const wingW = size * 0.52 * flap;
     const wingH = size * 0.3;
@@ -1570,7 +1613,7 @@
     ctx.ellipse(0, 0, 2.5, size * 0.34, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = `rgba(255, 130, 50, ${alpha * 0.95})`;
+    ctx.fillStyle = `hsla(${hue}, 88%, 58%, ${alpha * 0.95})`;
     ctx.beginPath();
     ctx.ellipse(-wingW * 0.5, -size * 0.1, wingW * 0.55, wingH, -0.35, 0, Math.PI * 2);
     ctx.fill();
@@ -1578,7 +1621,7 @@
     ctx.ellipse(wingW * 0.5, -size * 0.1, wingW * 0.55, wingH, 0.35, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = `rgba(255, 80, 160, ${alpha * 0.9})`;
+    ctx.fillStyle = `hsla(${hue2}, 82%, 62%, ${alpha * 0.9})`;
     ctx.beginPath();
     ctx.ellipse(-wingW * 0.45, size * 0.14, wingW * 0.48, wingH * 0.75, 0.25, 0, Math.PI * 2);
     ctx.fill();
@@ -1627,6 +1670,520 @@
     for (const c of ambientCreatures) {
       drawAmbientCreature(c);
     }
+  }
+
+  function pickStickerHues(kind) {
+    const palettes = {
+      flower: [330, 350, 12, 42, 280, 200, 145],
+      butterfly: [18, 42, 200, 275, 320, 140, 0],
+      balloon: [0, 22, 48, 200, 275, 320, 145],
+      heart: [350, 330, 12, 280, 20],
+      mushroom: [0, 18, 340, 210, 145],
+      bird: [205, 18, 42, 140, 280],
+      bee: [48, 40, 55],
+      star: [48, 200, 280, 0, 140],
+      tree: [122, 100, 38, 145],
+    };
+    const list = palettes[kind];
+    if (!list) return { hue: 40, hue2: 330 };
+    const hue = pickRandom(list);
+    return { hue, hue2: (hue + pickRandom([36, 48, 160, 200])) % 360 };
+  }
+
+  function createSticker(kind, x, y) {
+    const { hue, hue2 } = pickStickerHues(kind);
+    return {
+      id: nextStickerId++,
+      kind,
+      hue,
+      hue2,
+      x,
+      y,
+      homeX: x,
+      homeY: y,
+      phase: random(0, Math.PI * 2),
+      phaseSpeed: random(0.035, 0.06),
+      scale: random(0.92, 1.12),
+      vx: kind === "cloud"
+        ? random(0.18, 0.42) * (Math.random() < 0.5 ? -1 : 1)
+        : kind === "balloon"
+          ? random(-0.12, 0.12)
+          : kind === "rocket"
+            ? random(-0.2, 0.2)
+            : 0,
+      vy: kind === "balloon" ? random(-0.28, -0.12) : kind === "rocket" ? random(-0.35, -0.18) : 0,
+      twinkle: 1,
+      sway: 0,
+    };
+  }
+
+  function stickerHitRadius(s) {
+    if (s.kind === "cloud" || s.kind === "tree" || s.kind === "rainbow") return 42 * s.scale;
+    if (s.kind === "unicorn" || s.kind === "balloon" || s.kind === "rocket") return 36 * s.scale;
+    return 32 * s.scale;
+  }
+
+  function hitTestSticker(x, y) {
+    for (let i = stickers.length - 1; i >= 0; i--) {
+      const s = stickers[i];
+      if (Math.hypot(x - s.x, y - s.y) <= stickerHitRadius(s)) return s;
+    }
+    return null;
+  }
+
+  function removeSticker(id) {
+    stickers = stickers.filter((item) => item.id !== id);
+  }
+
+  function isEraseTool() {
+    return selectedStamp === "erase";
+  }
+
+  function placeSticker(kind, x, y) {
+    if (!STAMP_EMOJIS[kind]) return;
+    if (stickers.length >= MAX_STICKERS) stickers.shift();
+    stickers.push(createSticker(kind, x, y));
+    spawnStickerSparkles(x, y, 8);
+    navigator.vibrate?.(8);
+  }
+
+  function clearStickers() {
+    stickers = [];
+  }
+
+  function spawnStickerSparkles(x, y, count, hue) {
+    for (let i = 0; i < count; i++) {
+      const angle = random(0, Math.PI * 2);
+      particles.push(createParticle(x, y, angle, random(0.4, 2.4), hue ?? random(0, 360), "sparkle"));
+    }
+  }
+
+  function activateSticker(s) {
+    initAudio();
+    if (s.kind === "star" || s.kind === "bird" || s.kind === "rocket") {
+      burstSingleColor(s.x, s.y);
+      lastBurstKind = "normal";
+    } else if (s.kind === "butterfly" || s.kind === "rainbow") {
+      spawnRainbowArc(s.x, s.y, s.kind === "rainbow" ? "wow" : pickRandom(["small", "medium", "big"]));
+      lastBurstKind = s.kind === "rainbow" ? "wow" : "normal";
+    } else if (s.kind === "unicorn") {
+      burstRainbowRing(s.x, s.y);
+      lastBurstKind = "wow";
+    } else if (s.kind === "moon" || s.kind === "sun") {
+      burstGoldenRing(s.x, s.y);
+      lastBurstKind = "golden";
+    } else if (s.kind === "heart") {
+      spawnHeartBurst(s.x, s.y, "medium", () => s.hue ?? 350);
+      playPopSound("medium", "bright");
+      lastBurstKind = "normal";
+    } else {
+      spawnStickerSparkles(s.x, s.y, s.kind === "balloon" ? 34 : 24, s.hue);
+      playPopSound(s.kind === "balloon" ? "medium" : "small", s.kind === "flower" ? "bright" : "normal");
+      lastBurstKind = "sparkle";
+    }
+  }
+
+  function updateStickers() {
+    if (!isPlaying) {
+      for (const s of stickers) {
+        if (pointer.stickerId === s.id) continue;
+        s.x = s.homeX;
+        s.y = s.homeY;
+        s.twinkle = 1;
+        s.sway = 0;
+      }
+      return;
+    }
+
+    for (const s of stickers) {
+      s.phase += s.phaseSpeed;
+      if (s.kind === "star" || s.kind === "moon") {
+        s.x = s.homeX + Math.sin(s.phase * 0.6) * 6;
+        s.y = s.homeY + Math.cos(s.phase * 0.45) * 5;
+        s.twinkle = 0.68 + Math.sin(s.phase * 2.4) * 0.32;
+      } else if (s.kind === "sun") {
+        s.sway = s.phase * 0.35;
+        s.twinkle = 0.78 + Math.sin(s.phase * 1.8) * 0.22;
+      } else if (s.kind === "butterfly" || s.kind === "bee" || s.kind === "bird") {
+        s.x = s.homeX + Math.sin(s.phase * (s.kind === "bee" ? 1.8 : 1)) * (s.kind === "bee" ? 10 : 16);
+        s.y = s.homeY + Math.sin(s.phase * 1.7) * (s.kind === "bird" ? 14 : 10);
+      } else if (s.kind === "cloud") {
+        s.x += s.vx;
+        if (s.x < -90) s.x = width + 90;
+        if (s.x > width + 90) s.x = -90;
+        s.homeX = s.x;
+        s.y = s.homeY + Math.sin(s.phase * 0.4) * 4;
+      } else if (s.kind === "balloon") {
+        s.x += s.vx;
+        s.y += s.vy;
+        if (s.y < 40) s.vy = Math.abs(s.vy) * 0.4;
+        if (s.y > height - 80) s.vy = -Math.abs(s.vy);
+        if (s.x < 30 || s.x > width - 30) s.vx *= -1;
+        s.homeX = s.x;
+        s.homeY = s.y;
+        s.sway = Math.sin(s.phase) * 0.12;
+      } else if (s.kind === "rocket") {
+        s.x += s.vx;
+        s.y += s.vy;
+        if (s.y < 50) {
+          s.y = height - 70;
+          s.x = random(60, width - 60);
+        }
+        if (s.x < 40 || s.x > width - 40) s.vx *= -1;
+        s.homeX = s.x;
+        s.homeY = s.y;
+        s.sway = Math.atan2(s.vx, -s.vy) * 0.25;
+      } else if (s.kind === "unicorn" || s.kind === "mushroom") {
+        s.x = s.homeX + Math.sin(s.phase * 0.8) * 5;
+        s.y = s.homeY + Math.sin(s.phase * 2.1) * 9;
+      } else if (s.kind === "flower" || s.kind === "tree" || s.kind === "heart") {
+        s.sway = Math.sin(s.phase) * (s.kind === "heart" ? 0.08 : 0.2);
+        if (s.kind === "heart") s.twinkle = 0.75 + Math.sin(s.phase * 3) * 0.25;
+      } else if (s.kind === "rainbow") {
+        s.twinkle = 0.72 + Math.sin(s.phase * 1.4) * 0.28;
+      }
+    }
+  }
+
+  function drawFlowerSticker(x, y, size, sway, alpha, hue = 330) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway || 0);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      ctx.fillStyle = `hsla(${hue + (i % 2) * 8}, 78%, ${58 + (i % 2) * 6}%, ${alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(
+        Math.cos(a) * size * 0.34,
+        Math.sin(a) * size * 0.34,
+        size * 0.28,
+        size * 0.16,
+        a,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+    ctx.fillStyle = `hsla(${hue + 40}, 85%, 68%, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBalloonSticker(x, y, size, alpha, hue, sway) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway || 0);
+    ctx.strokeStyle = `hsla(${hue}, 20%, 30%, ${alpha * 0.7})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, size * 0.28);
+    ctx.quadraticCurveTo(size * 0.08, size * 0.4, 0, size * 0.52);
+    ctx.stroke();
+    ctx.fillStyle = `hsla(${hue}, 82%, 58%, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, -size * 0.04, size * 0.22, size * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, 70%, 42%, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.05, size * 0.22);
+    ctx.lineTo(0, size * 0.3);
+    ctx.lineTo(size * 0.05, size * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
+    ctx.beginPath();
+    ctx.ellipse(-size * 0.07, -size * 0.12, size * 0.06, size * 0.1, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawMushroomSticker(x, y, size, alpha, hue) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = `hsla(38, 35%, 78%, ${alpha})`;
+    ctx.fillRect(-size * 0.08, -size * 0.02, size * 0.16, size * 0.28);
+    ctx.fillStyle = `hsla(${hue}, 72%, 54%, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, -size * 0.08, size * 0.26, size * 0.18, 0, Math.PI, 0, true);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.85})`;
+    ctx.beginPath();
+    ctx.arc(-size * 0.08, -size * 0.12, size * 0.04, 0, Math.PI * 2);
+    ctx.arc(size * 0.07, -size * 0.08, size * 0.035, 0, Math.PI * 2);
+    ctx.arc(size * 0.02, -size * 0.16, size * 0.03, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBirdSticker(x, y, size, alpha, hue, phase) {
+    ctx.save();
+    ctx.translate(x, y);
+    const flap = Math.sin(phase * 3) * 0.25;
+    ctx.fillStyle = `hsla(${hue}, 70%, 55%, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size * 0.2, size * 0.14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(size * 0.16, -size * 0.04, size * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, 70%, 42%, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(-size * 0.04, -size * 0.02, size * 0.16, size * 0.08, -0.4 + flap, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(32, 90%, 55%, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(size * 0.24, -size * 0.03);
+    ctx.lineTo(size * 0.34, 0);
+    ctx.lineTo(size * 0.24, size * 0.03);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = `rgba(30, 30, 40, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(size * 0.18, -size * 0.06, size * 0.02, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBeeSticker(x, y, size, alpha, hue, phase) {
+    ctx.save();
+    ctx.translate(x, y);
+    const flap = 0.5 + Math.abs(Math.sin(phase * 4)) * 0.5;
+    ctx.fillStyle = `rgba(230, 240, 255, ${alpha * 0.55})`;
+    ctx.beginPath();
+    ctx.ellipse(-size * 0.02, -size * 0.12, size * 0.12 * flap, size * 0.08, -0.4, 0, Math.PI * 2);
+    ctx.ellipse(size * 0.08, -size * 0.12, size * 0.12 * flap, size * 0.08, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, 88%, 52%, ${alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size * 0.18, size * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(40, 30, 20, ${alpha})`;
+    ctx.fillRect(-size * 0.06, -size * 0.11, size * 0.045, size * 0.22);
+    ctx.fillRect(size * 0.02, -size * 0.11, size * 0.045, size * 0.22);
+    ctx.restore();
+  }
+
+  function drawTreeSticker(x, y, size, alpha, hue, sway) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway || 0);
+    ctx.fillStyle = `hsla(28, 45%, 38%, ${alpha})`;
+    ctx.fillRect(-size * 0.05, size * 0.02, size * 0.1, size * 0.24);
+    ctx.fillStyle = `hsla(${hue}, 62%, 42%, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(0, -size * 0.08, size * 0.2, 0, Math.PI * 2);
+    ctx.arc(-size * 0.12, 0, size * 0.14, 0, Math.PI * 2);
+    ctx.arc(size * 0.12, 0, size * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawEmojiSticker(x, y, size, alpha, emoji, glowRgb, sway) {
+    ctx.save();
+    ctx.translate(x, y);
+    if (sway) ctx.rotate(sway);
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, size * 0.72);
+    glow.addColorStop(0, `rgba(${glowRgb}, ${alpha * 0.55})`);
+    glow.addColorStop(1, `rgba(${glowRgb}, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.72, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = alpha;
+    ctx.font = `${Math.round(size)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(emoji, 0, 0);
+    ctx.restore();
+  }
+
+  function drawMoonSticker(x, y, size, alpha) {
+    ctx.save();
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, size * 0.8);
+    glow.addColorStop(0, `rgba(230, 236, 255, ${alpha * 0.4})`);
+    glow.addColorStop(1, "rgba(230, 236, 255, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(236, 240, 255, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.32, 0.35, Math.PI * 1.9);
+    ctx.arc(x + size * 0.14, y - size * 0.1, size * 0.26, Math.PI * 1.65, 0.9, true);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSunSticker(x, y, size, alpha, sway) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway || 0);
+    ctx.fillStyle = `rgba(255, 210, 70, ${alpha})`;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * size * 0.22, Math.sin(a) * size * 0.22);
+      ctx.lineTo(Math.cos(a) * size * 0.46, Math.sin(a) * size * 0.46);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(255, 196, 60, ${alpha})`;
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(255, 220, 80, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawHeartSticker(x, y, size, alpha, sway, hue = 350) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway || 0);
+    ctx.scale(size * 0.028, size * 0.028);
+    ctx.fillStyle = `hsla(${hue}, 78%, 58%, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.bezierCurveTo(-14, -6, -18, 8, 0, 18);
+    ctx.bezierCurveTo(18, 8, 14, -6, 0, 6);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawRainbowSticker(x, y, size, alpha) {
+    ctx.save();
+    ctx.lineCap = "round";
+    const hues = [0, 32, 55, 145, 210, 275];
+    hues.forEach((hue, i) => {
+      ctx.strokeStyle = `hsla(${hue}, 90%, 62%, ${alpha})`;
+      ctx.lineWidth = Math.max(3, size * 0.07);
+      ctx.beginPath();
+      ctx.arc(x, y + size * 0.18, size * 0.42 - i * size * 0.07, Math.PI, 0);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawSticker(s) {
+    const alpha = isPlaying ? (s.twinkle ?? 1) : 1;
+    const size = 52 * s.scale;
+    if (s.kind === "star") {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const glowR = size * 0.85;
+      const glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
+      glow.addColorStop(0, `hsla(${s.hue ?? 48}, 90%, 75%, ${alpha * 0.5})`);
+      glow.addColorStop(1, "rgba(255, 248, 200, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, glowR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+      drawCanvasFlyingStar(s.x, s.y, size, alpha, s.hue);
+      ctx.restore();
+    } else if (s.kind === "butterfly") {
+      drawCanvasButterfly(s.x, s.y, size, s.phase, s.x - s.homeX, alpha, s.hue, s.hue2);
+    } else if (s.kind === "cloud") {
+      ctx.save();
+      ctx.globalAlpha = 0.92 * alpha;
+      drawCloudBlob(ctx, s.x, s.y, 0.85 * s.scale);
+      ctx.restore();
+    } else if (s.kind === "flower") {
+      drawFlowerSticker(s.x, s.y, size, s.sway, alpha, s.hue);
+    } else if (s.kind === "balloon") {
+      drawBalloonSticker(s.x, s.y, size, alpha, s.hue, s.sway);
+    } else if (s.kind === "mushroom") {
+      drawMushroomSticker(s.x, s.y, size, alpha, s.hue);
+    } else if (s.kind === "bird") {
+      drawBirdSticker(s.x, s.y, size, alpha, s.hue, s.phase);
+    } else if (s.kind === "bee") {
+      drawBeeSticker(s.x, s.y, size, alpha, s.hue, s.phase);
+    } else if (s.kind === "tree") {
+      drawTreeSticker(s.x, s.y, size, alpha, s.hue, s.sway);
+    } else if (s.kind === "moon") {
+      drawMoonSticker(s.x, s.y, size, alpha);
+    } else if (s.kind === "sun") {
+      drawSunSticker(s.x, s.y, size, alpha, s.sway);
+    } else if (s.kind === "heart") {
+      drawHeartSticker(s.x, s.y, size, alpha, s.sway, s.hue);
+    } else if (s.kind === "rainbow") {
+      drawRainbowSticker(s.x, s.y, size, alpha);
+    } else if (STAMP_EMOJIS[s.kind]) {
+      drawEmojiSticker(
+        s.x,
+        s.y,
+        size * (s.kind === "unicorn" || s.kind === "rocket" ? 1.15 : 1),
+        alpha,
+        STAMP_EMOJIS[s.kind],
+        EMOJI_STAMP_GLOW[s.kind] || "255, 240, 200",
+        s.sway
+      );
+    }
+  }
+
+  function drawStickers() {
+    for (const s of stickers) drawSticker(s);
+  }
+
+  function chromeAtPoint(clientX, clientY, selector) {
+    const el = document.elementFromPoint(clientX, clientY);
+    return !!(el && el.closest(selector));
+  }
+
+  function isOverTrash(clientX, clientY) {
+    return chromeAtPoint(clientX, clientY, "#trash-btn");
+  }
+
+  function isOverTray(clientX, clientY) {
+    return chromeAtPoint(clientX, clientY, "#stamp-tray");
+  }
+
+  function selectStamp(kind) {
+    selectedStamp = selectedStamp === kind ? null : kind;
+    updateStampUi();
+    updateCustomCursor();
+  }
+
+  function updateStampUi() {
+    document.querySelectorAll(".stamp-btn[data-stamp]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.stamp === selectedStamp);
+    });
+    if (trashBtn) trashBtn.classList.toggle("active", isEraseTool());
+  }
+
+  function setSvgHidden(el, hide) {
+    if (!el) return;
+    el.hidden = hide;
+    if (hide) el.setAttribute("hidden", "");
+    else el.removeAttribute("hidden");
+  }
+
+  function updatePlayUi() {
+    document.body.classList.toggle("playing", isPlaying);
+    if (playBtn) playBtn.classList.toggle("active", isPlaying);
+    setSvgHidden(iconPlay, isPlaying);
+    setSvgHidden(iconPause, !isPlaying);
+    if (playBtn) {
+      playBtn.setAttribute("aria-label", isPlaying ? "Pause" : "Play");
+      playBtn.title = isPlaying ? "Pause" : "Play";
+    }
+    updateCustomCursor();
+  }
+
+  function togglePlay() {
+    resetPointer();
+    isPlaying = !isPlaying;
+    if (isPlaying) {
+      selectedStamp = null;
+      updateStampUi();
+    }
+    for (const s of stickers) {
+      s.homeX = s.x;
+      s.homeY = s.y;
+    }
+    updatePlayUi();
   }
 
   function createArc(clickX, clickY, targetRadius, maxAlpha) {
@@ -2595,6 +3152,9 @@
     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${trailA})`;
     ctx.fillRect(0, 0, width, height);
 
+    updateStickers();
+    drawStickers();
+
     updatePlanMarkers();
     updateArcs();
     updateParticles();
@@ -2649,6 +3209,8 @@
     pointer.dragging = false;
     pointer.button = null;
     pointer.planPoints = [];
+    pointer.stickerId = null;
+    pointer.composeAction = null;
     updateCursorDragState(false);
   }
 
@@ -2680,6 +3242,14 @@
       extendPlan(x, y);
       launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
       return;
+    }
+
+    if (isPlaying) {
+      const tapped = hitTestSticker(x, y);
+      if (tapped) {
+        activateSticker(tapped);
+        return;
+      }
     }
 
     const now = Date.now();
@@ -2718,6 +3288,44 @@
     noteInput();
     initAudio();
     const { x, y } = getCanvasCoords(clientX, clientY);
+
+    if (!isPlaying) {
+      if (button !== 0) {
+        pointer.active = false;
+        return;
+      }
+      pointer.active = true;
+      pointer.dragging = false;
+      pointer.button = 0;
+      pointer.startX = x;
+      pointer.startY = y;
+      pointer.lastPlanX = x;
+      pointer.lastPlanY = y;
+      pointer.planPoints = [];
+      pointer.lastClientX = clientX;
+      pointer.lastClientY = clientY;
+      pointer.stickerId = null;
+      pointer.composeAction = null;
+      const hit = hitTestSticker(x, y);
+      if (isEraseTool()) {
+        if (hit) {
+          pointer.stickerId = hit.id;
+          pointer.composeAction = "erase";
+        }
+      } else if (hit) {
+        pointer.stickerId = hit.id;
+        pointer.composeAction = "move";
+        const idx = stickers.indexOf(hit);
+        if (idx >= 0) {
+          stickers.splice(idx, 1);
+          stickers.push(hit);
+        }
+      } else if (selectedStamp) {
+        pointer.composeAction = "place";
+      }
+      return;
+    }
+
     pointer.active = true;
     pointer.dragging = false;
     pointer.button = button;
@@ -2729,6 +3337,8 @@
     pointer.planPoints = [];
     pointer.lastClientX = clientX;
     pointer.lastClientY = clientY;
+    pointer.stickerId = null;
+    pointer.composeAction = null;
 
     if (button === 2) {
       triggerWowEffect(x, y);
@@ -2746,6 +3356,23 @@
     pointer.lastClientY = clientY;
     const { x, y } = getCanvasCoords(clientX, clientY);
     const dist = Math.hypot(x - pointer.startX, y - pointer.startY);
+
+    if (!isPlaying) {
+      if (!pointer.dragging && dist >= DRAG_THRESHOLD) {
+        pointer.dragging = true;
+        updateCursorDragState(true);
+      }
+      if (pointer.composeAction === "move" && pointer.stickerId != null) {
+        const s = stickers.find((item) => item.id === pointer.stickerId);
+        if (s) {
+          s.x = x;
+          s.y = y;
+          s.homeX = x;
+          s.homeY = y;
+        }
+      }
+      return;
+    }
 
     if (!pointer.dragging && dist >= DRAG_THRESHOLD) {
       pointer.dragging = true;
@@ -2765,6 +3392,31 @@
     try {
       const { x, y } = getCanvasCoords(clientX, clientY);
 
+      if (!isPlaying) {
+        if (pointer.composeAction === "erase" && pointer.stickerId != null) {
+          const gone = stickers.find((item) => item.id === pointer.stickerId);
+          if (gone) spawnStickerSparkles(gone.x, gone.y, 6);
+          removeSticker(pointer.stickerId);
+        } else if (pointer.composeAction === "move" && pointer.stickerId != null) {
+          if (isOverTrash(clientX, clientY) || isOverTray(clientX, clientY)) {
+            removeSticker(pointer.stickerId);
+          } else {
+            const s = stickers.find((item) => item.id === pointer.stickerId);
+            if (s) {
+              s.x = x;
+              s.y = y;
+              s.homeX = x;
+              s.homeY = y;
+            }
+          }
+        } else if (pointer.composeAction === "place" && selectedStamp && !isEraseTool()) {
+          if (!isOverTray(clientX, clientY) && !isOverTrash(clientX, clientY)) {
+            placeSticker(selectedStamp, x, y);
+          }
+        }
+        return;
+      }
+
       if (pointer.button === 0) {
         handleLeftClick(x, y);
       }
@@ -2782,14 +3434,19 @@
 
   function updateCustomCursor() {
     if (!customCursor) return;
+    if (!isPlaying && (selectedStamp || trayDrag)) {
+      const kind = trayDrag?.kind || selectedStamp;
+      customCursor.textContent = STAMP_EMOJIS[kind] || "✨";
+      return;
+    }
     if (isRaining) customCursor.textContent = "🦄";
     else if (isDayMode) customCursor.textContent = "🦋";
     else customCursor.textContent = "✨";
   }
 
   function updateDayNightUi() {
-    if (iconSun) iconSun.hidden = isDayMode;
-    if (iconMoon) iconMoon.hidden = !isDayMode;
+    setSvgHidden(iconSun, isDayMode);
+    setSvgHidden(iconMoon, !isDayMode);
     document.body.classList.toggle("day-mode", isDayMode);
     if (daynightBtn) {
       daynightBtn.setAttribute("aria-label", isDayMode ? "Switch to night" : "Switch to day");
@@ -2841,7 +3498,7 @@
   });
 
   canvas.addEventListener("mouseleave", () => {
-    if (pointer.active && pointer.dragging && pointer.planPoints.length > 0) {
+    if (isPlaying && pointer.active && pointer.dragging && pointer.planPoints.length > 0) {
       launchPlan([...pointer.planPoints], pointer.planHue, pointer.planId);
     }
     if (pointer.active) resetPointer();
@@ -2852,6 +3509,7 @@
     const touch = e.touches[0];
     clearTouchPress();
     beginPointer(touch.clientX, touch.clientY, 0);
+    if (!isPlaying) return;
     touchPress = {
       startTime: Date.now(),
       clientX: touch.clientX,
@@ -3297,6 +3955,17 @@
   }
 
 
+  if (playBtn) {
+    playBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); resetPointer(); });
+    playBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      resetPointer();
+      noteInput();
+      togglePlay();
+    });
+  }
+
   if (rainBtn) {
     rainBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); resetPointer(); });
     rainBtn.addEventListener("click", (e) => {
@@ -3340,9 +4009,81 @@
     });
   }
 
+  function finishTrayDrag(e) {
+    if (!trayDrag || e.pointerId !== trayDrag.pointerId) return;
+    const kind = trayDrag.kind;
+    const target = e.currentTarget;
+    trayDrag = null;
+    try { target.releasePointerCapture(e.pointerId); } catch (err) {}
+    updateCursorDragState(false);
+    updateCustomCursor();
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el) return;
+    if (el.closest("#trash-btn") || el.closest("#stamp-tray")) return;
+    if (el.id === "canvas" || el.closest("#canvas")) {
+      const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+      placeSticker(kind, x, y);
+    }
+  }
+
+  document.querySelectorAll(".stamp-btn[data-stamp]").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      resetPointer();
+      noteInput();
+      if (isPlaying) return;
+      const kind = btn.dataset.stamp;
+      selectedStamp = kind;
+      updateStampUi();
+      updateCustomCursor();
+      trayDrag = {
+        kind,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+      };
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    btn.addEventListener("pointermove", (e) => {
+      if (!trayDrag || e.pointerId !== trayDrag.pointerId) return;
+      if (customCursor) {
+        customCursor.textContent = STAMP_EMOJIS[trayDrag.kind] || "✨";
+        customCursor.style.left = e.clientX + "px";
+        customCursor.style.top = e.clientY + "px";
+        customCursor.style.opacity = "1";
+        customCursor.classList.add("dragging");
+        cursorOnScreen = true;
+      }
+    });
+    btn.addEventListener("pointerup", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      finishTrayDrag(e);
+    });
+    btn.addEventListener("pointercancel", (e) => {
+      finishTrayDrag(e);
+    });
+  });
+
+  if (trashBtn) {
+    trashBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); resetPointer(); });
+    trashBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      resetPointer();
+      noteInput();
+      if (isPlaying) return;
+      selectedStamp = isEraseTool() ? null : "erase";
+      updateStampUi();
+      updateCustomCursor();
+    });
+  }
+
   document.addEventListener("fullscreenchange", () => {
-    iconEnter.hidden = !!document.fullscreenElement;
-    iconExit.hidden = !document.fullscreenElement;
+    setSvgHidden(iconEnter, !!document.fullscreenElement);
+    setSvgHidden(iconExit, !document.fullscreenElement);
   });
 
 
@@ -3351,7 +4092,7 @@
 
   document.addEventListener("mousemove", (e) => {
     if (!customCursor) return;
-    if (e.target.closest(".toolbar-btn")) {
+    if (e.target.closest(".toolbar-btn") || e.target.closest("#stamp-tray")) {
       customCursor.style.opacity = "0";
       cursorOnScreen = false;
       return;
@@ -3369,6 +4110,8 @@
   });
 
   updateDayNightUi();
+  updatePlayUi();
+  updateStampUi();
   window.addEventListener("resize", resize);
   noteInput();
   resize();
@@ -3395,5 +4138,10 @@
     postRainBonusLeft: () => postRainBonusClicksLeft,
     hasLightningMarkers: () => planMarkers.some((m) => m.lightning),
     lastCascadeAt: () => lastCascadeAt,
+    isPlaying: () => isPlaying,
+    stickerCount: () => stickers.length,
+    stickerKinds: () => stickers.map((s) => s.kind),
+    selectedStamp: () => selectedStamp,
+    stickers: () => stickers.map((s) => ({ id: s.id, kind: s.kind, x: s.x, y: s.y, hue: s.hue })),
   };
 })();

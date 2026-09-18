@@ -58,6 +58,10 @@ body.day-mode {
   top: 16px;
 }
 
+#play-btn {
+  top: calc(50% - 212px);
+}
+
 #daynight-btn {
   top: calc(50% - 100px);
 }
@@ -67,7 +71,7 @@ body.day-mode {
 }
 
 #constellation-btn {
-  top: calc(50% + 116px);
+  top: calc(50% + 124px);
 }
 
 body.day-mode .toolbar-btn {
@@ -89,8 +93,111 @@ body.day-mode #rain-btn.active {
   box-shadow: 0 0 0 3px rgba(60, 120, 200, 0.45);
 }
 
+#play-btn.active {
+  background: rgba(120, 220, 140, 0.7);
+  box-shadow: 0 0 0 3px rgba(140, 230, 160, 0.55);
+}
+
+body.day-mode #play-btn.active {
+  background: rgba(70, 180, 100, 0.8);
+  box-shadow: 0 0 0 3px rgba(50, 150, 80, 0.45);
+}
+
+#stamp-tray {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+  touch-action: none;
+  max-width: min(920px, calc(100vw - 140px));
+}
+
+body.day-mode #stamp-tray {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.stamp-btn {
+  width: 62px;
+  height: 62px;
+  flex: 0 0 62px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.95);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.stamp-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.stamp-btn:active {
+  transform: scale(0.94);
+}
+
+.stamp-btn.active {
+  background: rgba(255, 220, 120, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 230, 150, 0.65);
+}
+
+body.day-mode .stamp-btn {
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(40, 90, 140, 0.95);
+}
+
+body.day-mode .stamp-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+body.day-mode .stamp-btn.active {
+  background: rgba(255, 210, 90, 0.85);
+  box-shadow: 0 0 0 3px rgba(230, 170, 40, 0.5);
+}
+
+.stamp-trash svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+}
+
+@media (max-width: 900px) {
+  .stamp-btn {
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+    font-size: 28px;
+  }
+
+  #stamp-tray {
+    gap: 6px;
+    padding: 8px 10px;
+    bottom: 12px;
+  }
+}
+
 .toolbar-btn svg {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+}
+
+.toolbar-btn svg[hidden] {
+  display: none !important;
 }
 
 #custom-cursor {

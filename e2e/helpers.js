@@ -28,6 +28,10 @@ async function getTestState(page) {
     postRainBonusLeft: window.__fireworksTest.postRainBonusLeft(),
     hasLightningMarkers: window.__fireworksTest.hasLightningMarkers(),
     lastCascadeAt: window.__fireworksTest.lastCascadeAt(),
+    isPlaying: window.__fireworksTest.isPlaying(),
+    stickerCount: window.__fireworksTest.stickerCount(),
+    stickerKinds: window.__fireworksTest.stickerKinds(),
+    selectedStamp: window.__fireworksTest.selectedStamp(),
   }));
 }
 
@@ -64,9 +68,25 @@ async function finishDrag(page) {
   await page.mouse.up();
 }
 
-async function gotoGame(page) {
+async function enterPlay(page) {
+  const playing = await page.evaluate(() => window.__fireworksTest.isPlaying());
+  if (playing) return;
+  await page.locator("#play-btn").click();
+  await page.waitForFunction(() => window.__fireworksTest.isPlaying());
+}
+
+async function enterCompose(page) {
+  const playing = await page.evaluate(() => window.__fireworksTest.isPlaying());
+  if (!playing) return;
+  await page.locator("#play-btn").click();
+  await page.waitForFunction(() => !window.__fireworksTest.isPlaying());
+}
+
+async function gotoGame(page, options = {}) {
   await page.goto("/");
   await page.waitForFunction(() => window.__fireworksTest);
+  if (options.compose) return;
+  await enterPlay(page);
 }
 
 module.exports = {
@@ -78,4 +98,6 @@ module.exports = {
   dragOnCanvas,
   finishDrag,
   gotoGame,
+  enterPlay,
+  enterCompose,
 };
